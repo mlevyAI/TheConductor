@@ -13,6 +13,13 @@ Optional bundled monitoring for project-conductor (and Claude Code in general).
 
 **All data stays local.** Nothing is sent anywhere. The reporter writes to your local disk only. The share-footer is just a URL template — you decide whether to click it, what to paste, and what to redact first.
 
+> ⚠️ **Add the log paths to your project's `.gitignore` after copying.** `logger.py` writes `activity.jsonl` and `reporter.py` writes `reports/` next to the script. Once you copy `agent-monitor/` into your own project, those files live inside *your* repo tree — and they capture bash commands (which may include tokens or secrets pasted on the command line), agent prompts, and file paths. If you `git add .` and push, that data becomes public on your remote. Add this to your project's `.gitignore` immediately after the copy in step 1:
+>
+> ```
+> .claude/agent-monitor/activity.jsonl
+> .claude/agent-monitor/reports/
+> ```
+
 ## Install (3 steps)
 
 ### 1. Copy the directory into your project's `.claude/`
