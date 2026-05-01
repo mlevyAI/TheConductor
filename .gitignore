@@ -25,3 +25,4 @@
 # paths that may include secrets pasted on the command line.
 agent-monitor/activity.jsonl
 agent-monitor/reports/
+agent-monitor/hook-errors.log
