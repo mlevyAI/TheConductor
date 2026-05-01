@@ -115,6 +115,10 @@ if [[ ! -d "$REPO_ROOT/agent-monitor" ]]; then
   warn "agent-monitor/ directory not found at $REPO_ROOT — bundle paths may be incomplete."
 fi
 
+if [[ ! -f "$REPO_ROOT/lib/lock_check.py" ]]; then
+  warn "lib/lock_check.py not found at $REPO_ROOT — the conductor will fall back to legacy time-based stale-lock cleanup."
+fi
+
 # ---------------------------------------------------------------------------
 # Step 2 — Find Claude Code agents folder
 # ---------------------------------------------------------------------------
