@@ -26,7 +26,17 @@ import sys
 import os
 import re
 import datetime
+import traceback
 from pathlib import Path
+
+try:
+    import fcntl  # type: ignore
+    _HAS_FLOCK = True
+except ImportError:
+    _HAS_FLOCK = False
+
+# Bump when the paused-state file format changes incompatibly.
+PAUSED_SCHEMA_VERSION = 1
 
 
 # Patterns indicating usage/rate limit errors. Match case-insensitively
@@ -90,6 +100,38 @@ def extract_reset_seconds(text: str) -> int:
     return DEFAULT_WAIT_SECONDS
 
 
+def log_hook_error(conductor_dir, exc):
+    """Surface failures to .conductor/hook-errors.log instead of swallowing
+    them. Without this, a broken hook never wakes the conductor and the
+    user has no signal that recovery is dead."""
+    try:
+        err_path = conductor_dir / "hook-errors.log"
+        with open(err_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps({
+                "ts": datetime.datetime.now().isoformat(),
+                "hook": "usage_limit_wakeup.py",
+                "error": str(exc),
+                "traceback": traceback.format_exc()[:1000],
+            }, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+
+
+def write_paused_state(paused_path, payload):
+    """Write under exclusive lock so two near-simultaneous limit errors
+    don't produce a half-written file or a torn JSON."""
+    fd = os.open(str(paused_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
+    try:
+        if _HAS_FLOCK:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX)
+            except OSError:
+                pass
+        os.write(fd, json.dumps(payload, indent=2).encode("utf-8"))
+    finally:
+        os.close(fd)
+
+
 def main():
     try:
         raw = sys.stdin.read()
@@ -114,8 +156,10 @@ def main():
 
     conductor_dir = find_conductor_dir()
     paused_path = conductor_dir / "usage-limit-paused.json"
-    paused_path.write_text(
-        json.dumps({
+
+    try:
+        write_paused_state(paused_path, {
+            "schema_version": PAUSED_SCHEMA_VERSION,
             "detected_at": now.isoformat(),
             "expected_resume_at": resume_at.isoformat(),
             "wait_seconds": wait_seconds,
@@ -127,9 +171,10 @@ def main():
                 "After scheduling, surface a one-line notification to the user "
                 "(no need to ask permission — this is the planned recovery path)."
             ),
-        }, indent=2),
-        encoding="utf-8",
-    )
+        })
+    except Exception as exc:
+        log_hook_error(conductor_dir, exc)
+        return
 
     msg = (
         f"[Usage Limit] Detected rate-limit/usage-limit error from {data.get('tool_name', 'tool')}. "

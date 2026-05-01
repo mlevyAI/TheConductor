@@ -24,6 +24,7 @@ from collections import defaultdict, Counter
 
 LOG_DIR = os.path.dirname(os.path.abspath(__file__))
 LOG_FILE = os.path.join(LOG_DIR, "activity.jsonl")
+HOOK_ERRORS_FILE = os.path.join(LOG_DIR, "hook-errors.log")
 REPORTS_DIR = os.path.join(LOG_DIR, "reports")
 
 # Configuration — adjust these thresholds if your workload differs
@@ -59,6 +60,50 @@ def load_events():
                 except Exception:
                     pass
     return events
+
+
+def load_hook_errors():
+    """Read hook-errors.log written by logger/heartbeat/usage_limit hooks.
+    Surfacing these in the report is the only signal the user gets that a
+    hook has been silently failing — without it, a broken logger could run
+    for weeks producing empty events."""
+    if not os.path.exists(HOOK_ERRORS_FILE):
+        return []
+    errors = []
+    with open(HOOK_ERRORS_FILE, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                try:
+                    errors.append(json.loads(line))
+                except Exception:
+                    pass
+    return errors
+
+
+def format_hook_errors_section(errors):
+    if not errors:
+        return []
+    counts = Counter(e.get("hook", "?") for e in errors)
+    lines = [
+        "## ⚠️ Hook Errors Detected",
+        f"_{len(errors)} hook failure(s) since last report._ "
+        "These were swallowed at runtime — your monitoring/heartbeat/recovery "
+        "hooks were partially or fully broken during the session covered by "
+        "this report.",
+        "",
+        "| Hook | Failure Count |",
+        "|------|---------------|",
+    ]
+    for hook, count in counts.most_common():
+        lines.append(f"| `{hook}` | {count} |")
+    lines.append("")
+    lines.append("**Most recent failures (up to 5):**")
+    lines.append("")
+    for e in errors[-5:]:
+        lines.append(f"- `{e.get('hook', '?')}` at {e.get('ts', '?')} — {str(e.get('error', ''))[:200]}")
+    lines.append("")
+    return lines
 
 
 def split_sessions(events):
@@ -362,6 +407,12 @@ def generate_report(events: list) -> str:
         lines.append(f"- **Top tools:** {top}")
     lines.append("")
 
+    # Surface hook failures BEFORE anti-pattern analysis: if the logger
+    # itself was broken, the anti-pattern findings below are based on
+    # incomplete data and the user needs to know.
+    hook_errors = load_hook_errors()
+    lines.extend(format_hook_errors_section(hook_errors))
+
     # Aggregate auto-detection across all sessions
     all_findings = []
     for session in sessions:
@@ -403,6 +454,10 @@ def main():
 
     # Truncate the raw log after archiving to keep it clean for next session
     open(LOG_FILE, "w").close()
+    # Same for hook-errors: once surfaced in the report, drop them so a
+    # one-off failure doesn't keep showing up in every future report.
+    if os.path.exists(HOOK_ERRORS_FILE):
+        open(HOOK_ERRORS_FILE, "w").close()
 
     print(json.dumps({
         "systemMessage": f"[Agent Monitor] Report saved → {report_path}"

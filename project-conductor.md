@@ -863,17 +863,46 @@ For each task to be run in parallel:
 
 ### Lock file format
 
-`.conductor/locks/[task-id].lock`:
+`.conductor/locks/[task-id].lock` (REVISED in v4.1.2 — adds `session_id`, `acquired_pid`, `hostname` for PID + session-aware liveness):
 ```json
 {
+  "schema_version": 1,
   "task_id": "phase-2.task-3",
   "task_name": "Implement user signup endpoint",
   "executor": "general-purpose",
+  "session_id": "<the current Claude Code session_id>",
+  "acquired_pid": 12345,
+  "hostname": "build-host-01",
   "acquired_at": "2026-04-25T14:32:01Z",
   "files_write": ["src/api/auth/signup.ts", "src/api/auth/signup.test.ts"],
   "files_read": ["src/db/schema.ts", "src/lib/validation.ts"],
   "resources": ["db:users_table", "api:POST_/auth/signup"]
 }
+```
+
+When acquiring a lock, record:
+- `session_id` — the CURRENT Claude Code session id. This is the canonical ownership signal.
+- `acquired_pid` — the value of `$PPID` (the parent of the bash subshell, i.e. the Claude Code CLI process). Used by the lock-check script for liveness via `os.kill(pid, 0)`.
+- `hostname` — output of `hostname`. PIDs are only meaningful within a host; the lock check refuses to trust a PID from another machine.
+
+Acquire shell pattern:
+```bash
+PID=$PPID
+HOST=$(hostname)
+NOW=$(python3 -c 'import datetime; print(datetime.datetime.now().isoformat())')
+cat > .conductor/locks/<task-id>.lock <<EOF
+{
+  "schema_version": 1,
+  "task_id": "<task-id>",
+  "session_id": "<current session_id>",
+  "acquired_pid": $PID,
+  "hostname": "$HOST",
+  "acquired_at": "$NOW",
+  "files_write": [...],
+  "files_read": [...],
+  "resources": [...]
+}
+EOF
 ```
 
 ### Lock release
@@ -897,13 +926,38 @@ If two tasks need overlapping files:
 Document the decision in `progress.md`:
 "[time] Tasks X and Y had file conflict on [file]. Running sequentially."
 
-### Lock cleanup at session start
-On every session start, check for stale locks (>1 hour old or from prior session):
+### Lock cleanup at session start (REVISED in v4.1.2 — PID + session-aware)
+
+The old time-based cleanup (`find ... -mmin +60 -delete`) had two failure modes:
+1. A long-running task (>1h) had its still-active lock deleted out from under it.
+2. A second conductor running in the same project could clobber the first conductor's locks (silent file corruption from concurrent writes to the same files).
+
+The new cleanup uses `lib/lock_check.py` which classifies each lock as:
+- **own** — `session_id` matches current → keep, used for resume verification.
+- **live** — heartbeat shows the foreign session is active OR `os.kill(pid, 0)` succeeds and hostname matches → REFUSE TO PROCEED. Surface to user (another conductor is active).
+- **stale** — older than 24h with no live signal → safe to delete.
+- **uncertain** — recent foreign lock with no heartbeat match and inconclusive PID (e.g., cross-host) → ask the user before deleting.
+
+Call from session start:
 ```bash
-find .conductor/locks/ -name "*.lock" -mmin +60 -delete 2>/dev/null
+python3 /path/to/TheConductor/lib/lock_check.py \
+  --current-session-id "<current session_id>" \
+  --cleanup
 ```
 
-If found stale locks, log to progress.md.
+Exit codes:
+- `0` — safe to proceed (own and stale handled; uncertain were not deleted).
+- `1` — at least one foreign-live lock detected. **STOP. Surface to user.** Do not delete; do not start parallel work in this project until the user resolves it (kill the other session, or confirm the lock is bogus and remove manually).
+- `2` — script error.
+
+Log the parsed JSON output (own/live/stale/uncertain/deleted) to `progress.md`.
+
+If `lib/lock_check.py` is missing (older install), fall back to the old behavior with an explicit warning logged to `progress.md`:
+```
+WARNING: lock_check.py not found at <path>. Falling back to time-based cleanup.
+This is unsafe under parallel sessions or long-running tasks. Update with:
+  git -C <path-to-TheConductor> pull && <path-to-TheConductor>/install.sh
+```
 
 ### Status visibility for locks
 The `status.md` "Active locks" section lists current locks.
