@@ -20,6 +20,10 @@
 *.swp
 *.swo
 
+# Python
+__pycache__/
+*.pyc
+
 # Agent-monitor runtime output (logged session activity + generated reports).
 # Never commit these — they capture bash commands, agent prompts, and file
 # paths that may include secrets pasted on the command line.
