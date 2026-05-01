@@ -318,10 +318,14 @@ This is heuristic, not deterministic — but it catches the case where the user 
 - Final report includes a note: "Model routing was requested but cannot be verified by Conductor"
 - If a subagent has its own `model:` in frontmatter, that takes precedence over the Task tool's `model` parameter
 
-### Default routing heuristic
-- **Pure exploration / file discovery**: explicitly request `model: haiku` via Task
-- **Implementation / writing code**: let the subagent's own frontmatter decide, do not override
-- **Complex reasoning / architecture**: explicit `model: sonnet` (avoid opus override unless user authorized)
+### Default routing heuristic — complexity-score-driven (see Phase 1.3.5)
+
+Model selection at dispatch is **score-derived from Phase 1.3.5 enrichment**, not guessed from task type:
+
+- **Score 1–3** → request `model: haiku`
+- **Score 4–6** → request `model: sonnet`
+- **Score 7–10** → do NOT downgrade from the subagent's own frontmatter. If the subagent's frontmatter specifies haiku, request sonnet as the floor. Do not request opus.
+- **"TBD" tasks** (Tier 2 lazy routing): apply score-based model selection after the Tier 2 deep-read completes, not before.
 - **Never auto-route to opus**. Opus requires explicit user approval per the retry policy.
 
 ---
@@ -944,18 +948,26 @@ Hard Stops ALWAYS override emergent issue classification. If an in-scope fix tri
 - **A peer-resource needing a different technique than its peers** — e.g., 3 sites work with `requests` but 1 needs Playwright. Apply the right tool per-resource; don't blanket-apply.
 - **A failed initial probe** — failure on attempt #1 means try a different approach (different URL, different headers, different parser). Only when ≥3 distinct approaches have failed does the Anti-Premature-Failure Rule (Phase 3) escalate to "unverified" status — which is logged, not stopped.
 
-### Retry Policy (REVISED — no automatic premium escalation)
-1. **Attempt 1**: Same executor, fix obvious issue
-2. **Attempt 2**: Same model tier, reassign to a different subagent if available, OR retry with refined prompt
-3. **Attempt 3**: Same model tier, last try with maximum context (read more surrounding code, run diagnostics)
-4. **After 3**: Stop. Report to user with explicit cost estimate for premium retry:
+### Retry Policy (REVISED — score-capped retries, no automatic premium escalation)
+
+Max retries are **score-derived** (set in Phase 1.3.5 enrichment, immutable after gate approval):
+- **Score 1–3 → max 1 retry.** A simple task failing its one retry almost always signals a spec gap, missing credential, or environment issue — not a model capability problem. More retries won't fix any of those. Surface immediately.
+- **Score 4–6 → max 2 retries.**
+- **Score 7–10 → max 3 retries.**
+
+Retry sequence (steps apply only up to the task's score-capped max):
+1. **Attempt 1**: Same executor, fix the identified issue
+2. **Attempt 2** (score ≥4 only): Same model tier, reassign to different subagent if available OR retry with refined prompt and additional context
+3. **Attempt 3** (score ≥7 only): Same model tier, last try with maximum context — read more surrounding code, run diagnostics, inject research digest if not already present in the original dispatch
+
+**After max retries exceeded**: Stop this task. Continue with other independent tasks. Report to user:
    ```
-   Task X failed 3 times. Options:
-   (a) Manual fix by you, then "continue" 
+   Task X failed [N] time(s) (max retries for score [S]: [N]). Options:
+   (a) Manual fix by you, then "continue"
    (b) Authorize Opus retry (~$Y estimated based on task complexity)
    (c) Skip this task and continue with the rest
    ```
-5. **NEVER auto-escalate to Opus**. User must explicitly authorize.
+**NEVER auto-escalate to Opus**. User must explicitly authorize.
 
 ---
 
@@ -1027,6 +1039,35 @@ cp [spec-file] [spec-file].original.md
 - Credentials anticipation
 - **Estimate token budget category** (small/medium/large) based on task count and complexity
 
+### 1.3.5 Complexity Scoring (per task, before enrichment)
+
+Score each task before writing enrichment metadata. The score is the **binding source** for model selection, retry budget, and research requirements — not a descriptive label. It is computed entirely from observable signals in the spec text and project files detected in Phase 0.
+
+**Scoring rubric (additive — each signal contributes its points once):**
+
+| Signal | How to detect | Points |
+|---|---|---|
+| External API or third-party service | task text names a service, API endpoint, or auth flow (Stripe, Supabase, OAuth, etc.) | +2 |
+| UI / frontend with visual output | task text mentions component, page, render, form, or names a frontend framework | +2 |
+| DB schema mutation | task text mentions schema, migration, CREATE TABLE, ALTER TABLE, column, or index | +2 |
+| Writes/reads >5 distinct files | sum of declared `files_write` + `files_read` > 5 | +1 |
+| No acceptance criteria in task | task section has no "success when", "acceptance criteria", or "expected outcome" | +1 |
+| New runtime dependency not in project | task names a library or package absent from detected package.json / requirements.txt | +1 |
+| Cross-system coordination (≥2 independent backends) | task explicitly coordinates DB + API, frontend + API + cache, or similar combinations | +1 |
+
+**Score → binding decisions (written into every enriched task block):**
+
+| Score | Model at dispatch | Max retries | Pre-dispatch research |
+|---|---|---|---|
+| 1–3 | `haiku` | 1 | `skip` |
+| 4–6 | `sonnet` | 2 | `optional` — run only if ≥1 external API signal AND investigation budget has room |
+| 7–10 | Respect subagent frontmatter; floor at `sonnet` if frontmatter is haiku | 3 | `required` if external API or new dependency signal present; `optional` otherwise |
+
+**Hard constraints:**
+- Score never auto-triggers `opus`. Score 7–10 + user asks for opus = Hard Stop → surface cost estimate, wait.
+- The score is **immutable after the enrichment review gate is approved**. Do not re-score at dispatch time. If the spec changes materially before Phase 2, re-run enrichment and surface a new gate.
+- Trivial tasks that fail their single retry (score 1–3) are surfaced immediately — more retries won't fix a spec gap or a missing credential.
+
 ### 1.4 Enrich
 
 For each task, add (don't modify original):
@@ -1036,7 +1077,10 @@ For each task, add (don't modify original):
 <!-- Added by Conductor -->
 ### Execution Plan
 - **Assigned to**: [tool/subagent OR "TBD - decide at dispatch"]
-- **Model requested**: [haiku/sonnet — avoid opus]
+- **Complexity score**: [N/10] — active signals: [list each signal that contributed points]
+- **Model requested**: [haiku ≤3 / sonnet 4–6 / frontmatter ≥7 floored at sonnet — never opus]
+- **Max retries**: [1 / 2 / 3] — score-derived
+- **Pre-dispatch research**: [required / optional / skip] — score-derived
 - **Dependencies**: [task IDs]
 - **Duration estimate**: [range]
 - **Criticality**: [critical/standard/optional]
@@ -1140,6 +1184,28 @@ When a task involves multiple peer external resources (sites, APIs, services, da
 - Acceptance criteria clear
 - **If parallelizable**: check for lock conflicts
 - **If "TBD" routing**: do Tier 2 deep-read NOW (filter inventory, deep-read 1-3 candidates, decide)
+- **If `pre-dispatch research: required`**: run 2.1.5 before dispatch
+- **If `pre-dispatch research: optional`**: run 2.1.5 only if investigation budget has <3 artifacts used this task
+
+### 2.1.5 Pre-dispatch research (triggered by complexity score)
+
+For tasks where 2.1 pre-flight determined research should run:
+
+1. Identify the specific external API, library, or framework the task targets (from spec text and enrichment block)
+2. Run 1–3 targeted `WebSearch` or `WebFetch` calls:
+   - Prefer official docs, changelogs, or migration guides over blog posts
+   - Queries must be specific to this task's acceptance criteria — not general background reading
+   - Cap: 3 calls per task total
+3. Extract only what is actionable for this dispatch: breaking changes since training cutoff, correct endpoint structure, required auth headers, current method signatures, known gotchas
+4. Write digest to `.conductor/evidence/[task-id]-research.md` — **hard cap: 2k tokens**. Be ruthless: if a finding doesn't directly affect how the subagent should implement the task, cut it.
+5. Inject a `## Research Context` section into the Task dispatch prompt containing only the digest (not a link to the file — paste the content inline so the subagent sees it without needing a file read)
+
+**Do not run research for:**
+- Tasks with no external API or new dependency signal, even if score is ≥7
+- Tasks where the spec cites a specific version and the conductor has reliable training knowledge for that version
+- Tasks that are pure local work: refactors, config changes, test additions, file renames
+
+**Investigation budget interaction:** research digests written to `.conductor/evidence/` are **evidence artifacts, not throwaway probes**. They do NOT count against the 3-artifact investigation budget cap.
 
 ### 2.2 Lock acquisition (if parallel)
 - Detect resources from task definition
