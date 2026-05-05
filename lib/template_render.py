@@ -2,7 +2,7 @@ import re
 from pathlib import Path
 
 
-def render(template_path: str, payload: dict, target_path: str) -> tuple:
+def render(template_path: str, payload: dict, target_path: str) -> tuple[str, list[str]]:
     """Render a template file with variable substitution.
 
     Args:
