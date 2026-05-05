@@ -62,6 +62,33 @@ import datetime
 from pathlib import Path
 
 
+def path_within_declaration(target: str, declared: str, base: str = None) -> bool:
+    """True if target is at or inside the declared path using segment-exact prefix match.
+
+    Regression: src/api does NOT match src/api-keys/secrets.ts — the api-keys segment
+    differs from api at position 3, so the check correctly returns False.
+
+    Args:
+        target: absolute or relative path being written
+        declared: path from files_write[] (absolute or relative)
+        base: directory for resolving relative paths (default: cwd)
+    """
+    if base is None:
+        base = os.getcwd()
+    base_p = Path(base)
+
+    t_p = Path(target) if Path(target).is_absolute() else base_p / target
+    d_p = Path(declared) if Path(declared).is_absolute() else base_p / declared
+
+    try:
+        t_parts = t_p.resolve().parts
+        d_parts = d_p.resolve().parts
+    except Exception:
+        return False
+
+    return len(d_parts) <= len(t_parts) and t_parts[: len(d_parts)] == d_parts
+
+
 SCHEMA_VERSION = 1
 HEARTBEAT_STALE_SECONDS = 600  # 10 minutes — heartbeat older than this == dead
 
