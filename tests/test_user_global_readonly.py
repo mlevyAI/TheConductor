@@ -278,21 +278,31 @@ def test_templates_dir_does_not_target_user_global():
     if not TEMPLATES_DIR.is_dir():
         pytest.skip("templates/ directory not yet present (Phase C)")
 
+    user_claude = (Path.home() / ".claude").resolve()
+    fake_project = Path("/tmp/conductor-test-project")
+
     for path in TEMPLATES_DIR.rglob("*"):
         if not path.is_file():
             continue
         rel = path.relative_to(TEMPLATES_DIR)
-        # No template path component may be ~/.claude/ — templates resolve
-        # relative to the user's project cwd, never to the user's home.
         rel_str = str(rel)
+
+        # Absolute or ~-relative paths are forbidden in template names.
         assert not rel_str.startswith("~/"), (
             f"templates/{rel_str}: template paths must be project-relative, "
             "never user-home-relative"
         )
-        assert "/.claude/" not in str(path).replace(str(TEMPLATES_DIR), ""), (
-            # The .claude/ subdir is fine when relative to project; what's
-            # forbidden is a path that starts at the user's home.
-            f"templates/{rel_str}: unexpected ~/.claude/ in template path"
+        assert not rel_str.startswith("/"), (
+            f"templates/{rel_str}: template paths must be relative, not absolute"
+        )
+
+        # When scaffolded into a fake project dir, the resolved path must NOT
+        # land under ~/.claude/ — templates scaffold into the project, not user-global.
+        resolved_target = (fake_project / rel).resolve()
+        user_claude_parts = user_claude.parts
+        assert resolved_target.parts[: len(user_claude_parts)] != user_claude_parts, (
+            f"templates/{rel_str}: when resolved in a project, target would land "
+            f"under ~/.claude/ ({resolved_target})"
         )
 
 
