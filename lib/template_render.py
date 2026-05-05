@@ -33,9 +33,11 @@ def render(template_path: str, payload: dict, target_path: str) -> tuple[str, li
         content = f.read()
 
     # --- Substitution ---
-    missing: list = []
+    # Only {{ is special (opening delimiter); }} has no special meaning so no
+    # closing-brace escape is needed — write literal }} directly in templates.
+    missing_seen: dict[str, None] = {}  # ordered-set via dict keys
 
-    # Pattern: {{{{ (escape) OR {{VAR}} (variable)
+    # Pattern: {{{{ (escape to literal {{) OR {{VAR}} (variable substitution)
     pattern = re.compile(r"\{\{\{\{|\{\{([^{}]*)\}\}")
 
     def replacer(match: re.Match) -> str:
@@ -44,8 +46,8 @@ def render(template_path: str, payload: dict, target_path: str) -> tuple[str, li
         var_name = match.group(1)
         if var_name in payload:
             return str(payload[var_name])
-        missing.append(var_name)
+        missing_seen[var_name] = None
         return f"TODO: {var_name}"
 
     rendered = pattern.sub(replacer, content)
-    return rendered, missing
+    return rendered, list(missing_seen)

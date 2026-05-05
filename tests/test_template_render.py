@@ -1,4 +1,4 @@
-"""Tests for lib/template_render.py — covers spec §7.2 cases 1-10."""
+"""Tests for lib/template_render.py — covers spec §7.2 cases 1-10 plus dedup contract."""
 import pytest
 from pathlib import Path
 
@@ -127,3 +127,14 @@ def test_no_vars(tmp_path):
     rendered, missing = render(t, {}, "/tmp/out.md")
     assert rendered == content
     assert missing == []
+
+
+# ---------------------------------------------------------------------------
+# Dedup contract — same missing var used twice → one entry in missing list
+# ---------------------------------------------------------------------------
+
+def test_duplicate_missing_var_deduplicated(tmp_path):
+    t = make_template(tmp_path, "{{FOO}} and {{FOO}} again")
+    rendered, missing = render(t, {}, "/tmp/out.md")
+    assert rendered == "TODO: FOO and TODO: FOO again"
+    assert missing == ["FOO"]  # deduplicated, not ["FOO", "FOO"]
