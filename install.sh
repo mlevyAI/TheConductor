@@ -150,6 +150,15 @@ if [[ ! -d "$REPO_ROOT/skills" ]]; then
   exit 1
 fi
 
+if [[ ! -d "$REPO_ROOT/templates" ]]; then
+  warn "templates/ directory not found at $REPO_ROOT — scaffold feature will not work."
+  warn "Run: git pull to get the latest templates."
+fi
+
+if [[ ! -f "$REPO_ROOT/lib/template_render.py" ]]; then
+  warn "lib/template_render.py not found at $REPO_ROOT — scaffold feature will not work."
+fi
+
 # Count skill directories
 SKILL_DIRS=()
 for d in "$REPO_ROOT"/skills/conductor-*/; do
@@ -489,6 +498,40 @@ if [[ -d "$REPO_ROOT/hooks" ]]; then
   else
     ok "Hook canary: all $CANARY_PASS cases passed."
   fi
+fi
+
+# ---------------------------------------------------------------------------
+# Step 7 — Template render canary (Phase C)
+# ---------------------------------------------------------------------------
+if [[ -f "$REPO_ROOT/lib/template_render.py" && -d "$REPO_ROOT/templates" ]]; then
+  header "Template render canary"
+
+  # Pick one template to test — CLAUDE.md has the most vars
+  TEMPLATE_TO_TEST="$REPO_ROOT/templates/CLAUDE.md"
+  RENDER_CANARY_TARGET="/tmp/conductor_canary_render_$(date +%s).md"
+  RENDER_OK=0
+
+  if python3 - <<PYEOF 2>/dev/null
+import sys
+sys.path.insert(0, "$REPO_ROOT/lib")
+from template_render import render
+payload = {
+    "PROJECT_NAME": "CanaryProject",
+    "STACK": "React",
+    "LANG_PRIMARY": "TypeScript",
+    "TEXT_DIRECTION": "ltr",
+    "AUTH_MODEL": "JWT",
+}
+rendered, missing = render("$TEMPLATE_TO_TEST", payload, "$RENDER_CANARY_TARGET")
+assert "CanaryProject" in rendered, "PROJECT_NAME not substituted"
+PYEOF
+  then
+    ok "Template render canary: passed."
+    RENDER_OK=1
+  else
+    warn "Template render canary: FAILED — lib/template_render.py may be broken."
+  fi
+  rm -f "$RENDER_CANARY_TARGET"
 fi
 
 # ---------------------------------------------------------------------------
