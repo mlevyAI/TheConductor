@@ -250,3 +250,40 @@ def test_elements_separated_by_double_newline():
     )
     # task block ends with </task>, then double newline, then <constraints>
     assert "</task>\n\n<constraints>" in result
+
+
+# ---------------------------------------------------------------------------
+# Gap fixes: §7.2.1 whitespace symmetry + §7.2.3 threshold precision
+# ---------------------------------------------------------------------------
+
+def test_reminder_equals_task_task_has_whitespace():
+    """strip() is applied to task too — leading/trailing whitespace on task side."""
+    with pytest.raises(ValueError, match="reminder must differ"):
+        build_prompt(task="  Do X  ", reminder="Do X")
+
+
+def test_split_threshold_exact_boundary():
+    """Verify split fires at exactly threshold+1 chars (window-relative, not hard-coded)."""
+    # Use a small context_window so threshold = int(20 * 0.04) = 0 chars.
+    # Any non-trivial prompt will exceed 0 → split mode.
+    result_split = build_prompt(
+        task="X",
+        critical_context="C",
+        reference_context="R",
+        reminder="Final reminder",
+        context_window=20,   # threshold = int(20 * 0.04) = 0
+    )
+    assert "<critical-context>" in result_split
+    assert "<context>" not in result_split
+
+    # With a very large window, the same prompt stays base.
+    result_base = build_prompt(
+        task="X",
+        context="C",
+        critical_context="C",
+        reference_context="R",
+        reminder="Final reminder",
+        context_window=10_000_000,  # threshold = 400_000 — far exceeds prompt
+    )
+    assert "<context>" in result_base
+    assert "<critical-context>" not in result_base
