@@ -8,7 +8,27 @@ import os
 import sys
 from pathlib import Path
 
-_REPO_LIB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "lib")
+def _find_lib_dir():
+    # Primary: <repo>/lib/ relative to this hook's location (standard install)
+    candidate = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "lib")
+    if os.path.isfile(os.path.join(candidate, "lock_check.py")):
+        return candidate
+    # Fallback: walk up the directory tree looking for a lib/lock_check.py
+    here = os.path.dirname(os.path.abspath(__file__))
+    for _ in range(5):
+        here = os.path.dirname(here)
+        candidate = os.path.join(here, "lib")
+        if os.path.isfile(os.path.join(candidate, "lock_check.py")):
+            return candidate
+    return None
+
+_REPO_LIB = _find_lib_dir()
+if _REPO_LIB is None:
+    sys.stderr.write(
+        "pre_lock_enforcement: cannot locate lib/lock_check.py — lock enforcement disabled.\n"
+        "Ensure this hook is referenced via its absolute path in the TheConductor repo.\n"
+    )
+    sys.exit(0)
 sys.path.insert(0, _REPO_LIB)
 from lock_check import path_within_declaration  # noqa: E402
 

@@ -153,13 +153,15 @@ def _lock_age_seconds(lock):
         # Accept both Z-suffixed and naive ISO timestamps.
         ts_str = ts_str.replace("Z", "+00:00") if ts_str.endswith("Z") else ts_str
         ts = datetime.datetime.fromisoformat(ts_str)
-        if ts.tzinfo:
-            ts = ts.replace(tzinfo=None) - datetime.timedelta(
-                seconds=ts.utcoffset().total_seconds()
-            )
+        # Normalise to UTC-aware so comparison against now() is always apples-to-apples.
+        # Naive timestamps are assumed UTC (standard for ISO 8601 lock files).
+        utc = datetime.timezone.utc
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=utc)
     except ValueError:
         return None
-    return (datetime.datetime.now() - ts).total_seconds()
+    now_utc = datetime.datetime.now(datetime.timezone.utc)
+    return (now_utc - ts).total_seconds()
 
 
 def classify_lock(lock_path, lock, current_session_id, conductor_dir, max_age_hours):

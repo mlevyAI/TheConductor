@@ -20,12 +20,13 @@ The point of the rule is to prevent two opposite drifts: (a) the body bloating w
 - **Target:** ≤450 lines.
 - **CI gate:** the workflow at `.github/workflows/test.yml` includes a step that fails if `wc -l project-conductor.md` exceeds **500**. The 50-line headroom between target and gate exists so a routine PR doesn't have to also do compression — but gradual drift past 500 must trigger a refactor.
 - **Audit cadence:** quarterly OR whenever the body grows by more than 30 lines in a single PR.
+- **Current count:** verify with `wc -l project-conductor.md` before merging any PR that touches the body.
 
 ## 3. Hook canary on every install
 
-`install.sh` (Phase B and onward) runs each new hook with synthetic stdin in two configurations: an allow-case (exit 0 expected) and a block-case (exit 2 expected for PreToolUse hooks). If any canary fails, the hook is **not installed** and a row is written to `.conductor/decisions.md` with the failure reason.
+The conductor's bundle-install procedure (triggered by `install bundles N from /path/to/TheConductor`) runs each new hook with synthetic stdin in two configurations: an allow-case (exit 0 expected) and a block-case (exit 2 expected for PreToolUse hooks). If any canary fails, the hook is **not installed** and a row is written to `.conductor/decisions.md` with the failure reason.
 
-Phase A: this rule is forward-compatible. The 6 new hooks land in Phase B; this rule activates then.
+The 6 Phase B backstop hooks (`pre_phase0_readonly.py`, `pre_first_response_gate.py`, `pre_busy_wait_block.py`, `pre_lock_enforcement.py`, `post_output_quality.py`, `stop_validate_final_report.py`) are referenced via absolute path in `settings.json` — they run from the TheConductor repo, not from a copy. `pre_lock_enforcement.py` has a resilient `_find_lib_dir()` fallback that walks up the directory tree if the primary relative path fails.
 
 ## 4. Hook firing-and-runtime health
 
@@ -58,7 +59,7 @@ Phase A note: scaffolding doesn't run yet. The `conductor-scaffold-ai-director-o
 
 ## 7. User-global boundary check
 
-**Quarterly** (and on every PR that touches `install.sh`, `lib/template_render.py` when it lands, or skill `allowed-tools`):
+**Quarterly** (and on every PR that touches `install.sh`, `lib/template_render.py`, or any skill `allowed-tools`):
 
 ```bash
 pytest tests/test_user_global_readonly.py
@@ -74,3 +75,9 @@ This test:
 **This is the load-bearing invariant of the spec.** A new component growing a write path into user-global without the rest of the team noticing would silently violate §3.1. The boundary is enforceable only because this test fails on regression.
 
 If this test ever fails, halt the PR and investigate. There is no acceptable "fix it later" — user-global writes affect every project on the user's machine, and TheConductor is shipped to the community (#buildinpublic). Every install on a stranger's machine inherits the boundary contract.
+
+Full test coverage is in `tests/`. Run the complete suite with:
+```bash
+pytest tests/ -v --tb=short
+```
+CI runs this automatically on every push to `main` and every pull request via `.github/workflows/test.yml`.

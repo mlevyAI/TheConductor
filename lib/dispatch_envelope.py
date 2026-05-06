@@ -136,16 +136,22 @@ def apply_literalism_rules(prompt: str) -> str:
     1. Replaces vague API/endpoint references with explicit file globs.
     2. Appends root-cause instruction for bugfix prompts (idempotent).
     """
-    # Rule 1a: "all API routes" → explicit glob
-    prompt = prompt.replace(
-        "all API routes",
+    import re as _re
+
+    # Rule 1a: "all API routes" → explicit glob (case-insensitive)
+    prompt = _re.sub(
+        r"all\s+api\s+routes",
         "all files matching `src/api/**/*`. Process each file independently and confirm each one.",
+        prompt,
+        flags=_re.IGNORECASE,
     )
 
-    # Rule 1b: "all endpoints" → explicit glob
-    prompt = prompt.replace(
-        "all endpoints",
+    # Rule 1b: "all endpoints" → explicit glob (case-insensitive)
+    prompt = _re.sub(
+        r"all\s+endpoints",
         "all files matching `src/**/*.ts`. Process each file independently and confirm each one.",
+        prompt,
+        flags=_re.IGNORECASE,
     )
 
     # Rule 2: root-cause instruction for bugfix prompts (idempotent)

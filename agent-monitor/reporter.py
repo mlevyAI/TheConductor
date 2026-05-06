@@ -32,9 +32,12 @@ PROBE_FILE_PATTERNS = (
     r"probe[_\d]*\.py$",
     r"scratch[_\d]*\.py$",
     r".+_scratch\.py$",
-    r"test_[a-z_]+\.py$",  # ad-hoc test scripts (heuristic)
     r"smoke_[a-z_]+\.py$",
 )
+# Filenames that look like tests but are only flagged as probes when they live
+# inside a conductor-managed directory (not a project's real tests/ suite).
+PROBE_TEST_PATTERN = re.compile(r"test_[a-z_]+\.py$")
+PROBE_TEST_PATHS = (".conductor/", "probes/", "conductor_probes/")
 PROBE_SPRAWL_THRESHOLD = 3
 BUSY_WAIT_PATTERN = re.compile(r"until\s+.+;\s*do\s+sleep\s+\d+|while\s+.+;\s*do\s+sleep\s+\d+")
 BUSY_WAIT_THRESHOLD = 2
@@ -134,7 +137,13 @@ def detect_patterns(session):
     probe_writes = []
     for path in write_files:
         basename = os.path.basename(path or "")
-        if any(re.match(pat, basename) for pat in PROBE_FILE_PATTERNS):
+        path_str = path or ""
+        is_probe = any(re.match(pat, basename) for pat in PROBE_FILE_PATTERNS)
+        if not is_probe and PROBE_TEST_PATTERN.match(basename):
+            # test_*.py is only a probe if it lives in a conductor-managed directory,
+            # not in the project's real test suite.
+            is_probe = any(marker in path_str for marker in PROBE_TEST_PATHS)
+        if is_probe:
             probe_writes.append(path)
     # Filter to only those never re-edited
     probes_never_edited = [p for p in probe_writes if p not in edit_files]

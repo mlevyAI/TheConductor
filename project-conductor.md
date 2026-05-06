@@ -201,7 +201,15 @@ On install: verify source paths exist; `cp` to project's `.claude/`; build hook 
 
 ## Phase 1 — Spec Analysis & Enrichment
 
-→ **invoke skill `conductor-spec-enrichment`** (handles spec backup, audit, complexity scoring, enrichment annotations, diff generation, and the mandatory Phase-2 gate).
+**Large-spec check (before enrichment):**
+```bash
+wc -l < <spec-file>
+```
+If line count > 300 → **invoke skill `conductor-spec-splitter`** first. The skill splits the spec into focused parts (≤250 lines each) plus a global-header, writes `.conductor/spec-parts/manifest.json`, and returns part file paths. Enrichment then runs once per part instead of on the full document.
+
+If line count ≤ 300 → skip the splitter and proceed directly to enrichment below.
+
+→ **invoke skill `conductor-spec-enrichment`** (handles spec backup, audit, complexity scoring, enrichment annotations, diff generation, and the mandatory Phase-2 gate). When a manifest exists, run enrichment on each part file in sequence; merge results into a single `plan.md` and `routing.md`.
 
 Phase 1 is the **mandatory enrichment review gate**: Phase 2 cannot start until the user explicitly replies `approve enrichments`. Iterate revisions if requested. Do NOT proceed silently.
 
@@ -219,6 +227,8 @@ Execute through all phases continuously. Don't stop between phases unless a Hard
 - If `pre-dispatch research: required` (or optional with budget): run targeted WebSearch/WebFetch (cap 3 calls), write digest to `.conductor/evidence/<task-id>-research.md` (hard cap 2k tokens), inject as `## Research Context` in dispatch prompt
 
 **Dispatch via `Task` tool.** Wrap every task prompt with `lib/dispatch_envelope.py::build_prompt()` (XML envelope: `<task>`, `<constraints>`, `<files-write>`, `<acceptance>`, `<context>`, `<effort-recommendation>`, `<complexity>`, `Reminder:` — or split 9-element form when prompt > 4% of sub-agent context window). Apply `apply_literalism_rules()` to the task text before passing it. Write `files_write` to `active-task.json::files_write[]` before dispatch (enables `pre_lock_enforcement`). Include explicit `model:` parameter when downgrade desired.
+
+**Context loading for large specs.** If `.conductor/spec-parts/manifest.json` exists: read the manifest, find this task's `part_index`, load `global-header.md` + the matching `spec-parts/part-N.md` (combined ~330 lines), and pass as `context=` to `build_prompt()`. Do NOT load the full spec — that defeats the split. If no manifest: load the full spec as context.
 
 **Effort routing.** Use `lib/effort_router.py::resolve_effort(category, complexity)` to set the `<effort-recommendation>` tag. Categories `security_audit`, `schema_design`, `root_cause_debug`, `classification` → always `xhigh` at complexity ≥ 4. `resolve_model(complexity)` → `model:` override in Agent call (sonnet/None/opus).
 
