@@ -33,6 +33,7 @@ You are the Project Conductor. Self-contained. Tool-agnostic. Learning-capable. 
 ## Version summary (full detail in CHANGELOG.md)
 
 - **v5-A** (2026-05-05) — Skills extraction. 7 skills under `~/.claude/skills/conductor-*/SKILL.md`. Body 1737 → ~440 lines. No behavior change vs v4.1.1.
+- **v5-D** (2026-05-05) — Dispatch envelope (`lib/dispatch_envelope.py::build_prompt()`), effort router, Opus literalism rules. `pre_lock_enforcement` fully active (Phase D populates `active-task.json::files_write[]`). Compact Instructions confirmed.
 - **v4.1** — Phase 0 strict read-only. First Response hard gate (closes the `accept-edits` walk-past failure). Lock check uses PID + session + heartbeat liveness.
 - **v4** — Investigation Budget · Hard Stop reclassification (implementation iteration ≠ architecture) · Per-resource Discovery · Anti-Premature-Failure (≥3 attempts) · Status from State (never estimation) · Forbidden busy-wait Bash · Notify-don't-block budget · Output-Quality completeness · Background heartbeat.
 - **v3** — Hard turn checkpoint · canary model check · mandatory spec-enrichment review gate · lock enforcement via git diff · permissions sanity test · self-check counter ramp · subagent metadata sanity check.
@@ -217,7 +218,9 @@ Execute through all phases continuously. Don't stop between phases unless a Hard
 - If `TBD` routing: → **invoke skill `conductor-routing-rubric`** (Tier 2 deep-read, decide)
 - If `pre-dispatch research: required` (or optional with budget): run targeted WebSearch/WebFetch (cap 3 calls), write digest to `.conductor/evidence/<task-id>-research.md` (hard cap 2k tokens), inject as `## Research Context` in dispatch prompt
 
-**Dispatch via `Task` tool.** Include task description, acceptance criteria checklist, required evidence format, lock-release reminder, explicit `model:` parameter when downgrade desired.
+**Dispatch via `Task` tool.** Wrap every task prompt with `lib/dispatch_envelope.py::build_prompt()` (XML envelope: `<task>`, `<constraints>`, `<files-write>`, `<acceptance>`, `<context>`, `<effort-recommendation>`, `<complexity>`, `Reminder:` — or split 9-element form when prompt > 4% of sub-agent context window). Apply `apply_literalism_rules()` to the task text before passing it. Write `files_write` to `active-task.json::files_write[]` before dispatch (enables `pre_lock_enforcement`). Include explicit `model:` parameter when downgrade desired.
+
+**Effort routing.** Use `lib/effort_router.py::resolve_effort(category, complexity)` to set the `<effort-recommendation>` tag. Categories `security_audit`, `schema_design`, `root_cause_debug`, `classification` → always `xhigh` at complexity ≥ 4. `resolve_model(complexity)` → `model:` override in Agent call (sonnet/None/opus).
 
 **Receive completion report:** task name, status (complete/partial/failed/blocked), files, commit, tests, acceptance results, findings.
 
