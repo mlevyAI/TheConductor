@@ -1,0 +1,37 @@
+name: Tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest pyyaml
+
+      - name: Run pytest
+        run: pytest tests/ -v --tb=short
+
+      - name: Conductor body line budget gate
+        run: |
+          lines=$(wc -l < project-conductor.md)
+          echo "project-conductor.md is $lines lines"
+          if [ "$lines" -gt 500 ]; then
+            echo "::error::project-conductor.md exceeds 500-line gate ($lines lines). See docs/maintenance.md rule #2."
+            exit 1
+          fi
+
+      - name: Bash syntax check (install.sh)
+        run: bash -n install.sh
