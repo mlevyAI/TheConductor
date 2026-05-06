@@ -4,32 +4,22 @@
 
 Project Conductor takes a spec file and runs your entire build — from environment discovery through final delivery — with minimal interruptions. It discovers what tools are actually available in your environment, routes tasks to the right subagents, enforces budgets, and produces a final report with a surgical debug map.
 
-## What's new in v4.1
+## What's new in v5
 
-v4.1 hardens the gate between Phase 0 (environment scan) and Phase 1+ (build) and ships a one-command installer:
-
-- **Phase 0 is now strictly READ-ONLY.** Explicit allowlist of inspection-only Bash; no `Write`/`Edit` outside `.conductor/`, no source-dir `mkdir`, no target-site network probes (v4.1.1).
-- **First Response is a HARD GATE.** No `Write`/`Edit`/tree-mutating Bash and no `Task` dispatches until the user replies `proceed`. Closes a real failure mode where `accept-edits` mode let the conductor walk past the Permissions / Bundles offers straight into source writes (v4.1.1).
-- **`install.sh` for one-command deploy.** Single command bakes the real source-repo path into the deployed agent, so the bundle install offer shows the user's actual path instead of a placeholder. Update is now `git pull && ./install.sh` (v4.1.0).
-
-## What's new in v4
-
-v4.0.0 is a behavior-shift release derived from real-world test sessions. v3 was over-cautious — it interrupted users when it should have iterated, asked when it should have tried harder, and gave up when alternative paths existed. v4 is biased toward **iterating before asking, discovering before declaring impossible, and notifying without blocking**.
+v5 is the largest architectural shift since the conductor was created. The monolithic 1 700-line body has been broken into modular skills, the hook layer is now fully wired, the AI Director scaffold is production-ready, and routing/effort decisions are driven by a complexity score rather than hardcoded logic.
 
 | Change | What it fixes |
 |---|---|
-| **Investigation Budget** (cap on probe/research artifacts) | Stops the "research mode" loop where the agent writes throwaway scripts indefinitely without committing to a draft |
-| **Hard Stop reclassification** | "Site needs Playwright instead of requests" is implementation iteration, not architectural change — iterate, don't ask |
-| **Per-resource Discovery rule** | When ≥2 peer external resources are involved, each gets independent discovery — no blanket-applying one solution |
-| **Anti-Premature-Failure rule** | ≥3 distinct approaches before declaring impossible. The phrase "KNOWN LIMITATION" is BANNED in shipped code |
-| **Status from State, not Estimation** | Status MUST come from a state file, log, or observed signal — never "probably 25 minutes remaining" |
-| **Forbidden Bash Patterns** | `until ... ; do sleep N; done` busy-wait loops banned; use ScheduleWakeup or mtime-poll |
-| **Notify, Don't Block** | 70%/95% budget become notifications. Turn-25 checkpoint becomes informational. Anti-shrinkage: deliver partial output and continue |
-| **Output-Quality Completeness Check** | Detects column-empty / row-empty / fill-rate anomalies BEFORE declaring success |
-| **Heartbeat for Background Mode** | `.conductor/heartbeat.json` so parent agents read background status without spawning a second conductor |
-| **Optional bundles** (`agent-monitor/`, `hooks/`) | Auto-detection of anti-patterns in session reports; usage-limit→ScheduleWakeup recovery |
+| **Modular skills** (6 new conductor skills) | Kept the body under 450 lines; phase-specific logic lives in discoverable, independently-invocable skills |
+| **Complexity scoring → routing** | Model selection (Haiku / Sonnet / Opus) and retry budget are derived from a score, not from ad-hoc conditionals |
+| **Dispatch envelope** | Every outbound agent call goes through a typed envelope — literalism rules, effort, model, and pre-dispatch research are applied in one place |
+| **Effort router** | Resolves spec hints + score override + explicit flag into a single effort level; avoids over-spending Opus on simple tasks |
+| **6 new PreToolUse / Stop hooks** | Busy-wait blocking, lock enforcement, Phase 0 read-only guard, first-response gate, output-quality check, final-report validation — all active by default after install |
+| **AI Director scaffold** | `install.sh --for-project` writes a full project CLAUDE.md + rules + PRD template into a new repo in one command |
+| **Conductor state reader** | `lib/conductor_state.py` — typed access to `.conductor/` state; migration-safe from v4 |
+| **Template renderer** | `lib/template_render.py` — path-safety enforced; resolves `{{VARIABLES}}` from a dict; refuses writes outside the target directory |
 
-See [CHANGELOG.md](CHANGELOG.md) for full v4.0.0 details.
+See [CHANGELOG.md](CHANGELOG.md) for the full history.
 
 ## What it does
 
@@ -57,7 +47,7 @@ It will:
 
 ## Safety mechanisms
 
-Project Conductor v4 is hardened against autonomous-agent failure modes (mechanisms listed by version):
+Project Conductor v5 is hardened against autonomous-agent failure modes (mechanisms listed by version):
 
 **v3 mechanisms (still active):**
 
@@ -83,12 +73,15 @@ Project Conductor v4 is hardened against autonomous-agent failure modes (mechani
 | **Turn checkpoint** (informational, non-blocking) | Was mandatory pause in v3; demoted to notification in v4 — opt into `--strict-mode` for v3 behavior |
 | **Heartbeat for Background Mode** | Parent agents losing visibility into backgrounded conductor instances |
 
-**v4.1 mechanisms (NEW):**
+**v5 mechanisms (NEW):**
 
 | Mechanism | What it prevents |
 |-----------|-----------------|
 | **Phase 0 read-only enforcement** | Conductor writing source files during the discovery scan — only `.conductor/` is writable, only inspection-only Bash is allowed |
 | **First Response hard gate** | Conductor walking past the Permissions / Bundles offers and starting to build before the user replies `proceed` (the `accept-edits`-mode failure mode) |
+| **Complexity-scored routing** | Over-spending Opus on trivial tasks; under-provisioning Haiku tasks that silently need more model capability |
+| **Dispatch envelope + literalism rules** | Subagents ignoring spec requirements or adding unrequested features — envelope enforces caller intent on every dispatch |
+| **6 hook backstops** | Busy-wait loops, phantom locks, Phase 0 writes, premature starts, empty-column output, and invalid final reports — each caught and blocked by a dedicated hook |
 
 ## Installation
 
