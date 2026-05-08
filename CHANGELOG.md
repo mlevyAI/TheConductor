@@ -8,6 +8,42 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [6.0.0] — 2026-05-08
+
+Theme: **"Every task is replayable."** Turns `.conductor/` from a session log into a time-travelable evidence store. Every dispatched task produces a structured per-task evidence folder; every spec criterion is mapped to the task and commit that satisfied it; every routing decision gets a stable `D###` ID; the surgical debug map updates live as features complete instead of only at end-of-session. Designed so a developer can come back months later and replay any task surgically from git history alone.
+
+### Added
+
+- **`lib/evidence.py`** — per-task evidence folder API. `init_task()`, `write_envelope()`, `write_result()`, `record_files()` (files written + commit SHA + tests run), `append_decision()`. Persists to `.conductor/evidence/tasks/<task-id>/{manifest.json, envelope.xml, result.md, files.json, decisions.json}`. Validates task IDs against path traversal. Atomic writes throughout.
+- **`lib/coverage.py`** — spec coverage matrix. `register_criterion(text, source=...)` allocates `C###` IDs idempotently; `link_task(criterion_id, task_id)` is many-to-many; `derive_status()` reads from per-task evidence to decide `not_started | in_progress | complete`; `write_coverage_md()` renders `.conductor/coverage.md` with completion percentage, short commit SHAs, and pipe-escaped criterion text. Authoritative state in `.conductor/coverage.json`.
+- **`lib/decisions.py`** — structured decision provenance. `append_decision(summary, rationale=..., task_id=...)` allocates monotonic `D###` IDs by scanning existing `## D###` headings in `decisions.md` (so pre-v6 free-text content is preserved). When `task_id` is provided, mirrors the record to the task's evidence folder via `lib/evidence.py`.
+- **`lib/debug_map.py`** — live surgical debug map. `upsert_feature()` is idempotent by feature name; `add_limitation()` enforces ≥3 approaches tried (per §v4 Anti-Premature-Failure) and rejects the banned phrase `KNOWN LIMITATION`; `write_debug_map_md()` writes `.conductor/debug-map.md`. The existing `conductor-debug-map` skill remains the post-flight synthesizer; this lib is the live, mid-run counterpart.
+- **`hooks/pre_state_committed.py`** — advisory hook (PreToolUse, never blocks). On first invocation per session, if `.gitignore` excludes `.conductor/`, appends a one-time advisory to `findings.md` recommending the user remove the line so per-task evidence is captured in git history (or to gitignore only `locks/` and `probes/` instead). Idempotent via marker file `.conductor/.gitignore-warning-logged`.
+- **88 new tests** — `tests/test_evidence.py` (22), `tests/test_coverage.py` (21), `tests/test_decisions.py` (15), `tests/test_debug_map.py` (18), `tests/test_pre_state_committed.py` (12).
+
+### Changed
+
+- **`project-conductor.md`** — added a v6 section explicitly wiring `lib/evidence.py`, `lib/coverage.py`, `lib/decisions.py`, and `lib/debug_map.py` into the Phase 1 → Phase 2 → completion flow. The Compact Instructions "Preserve through compaction" list now includes the four new artifacts. Phase completion language is sharper: "are we done?" is answered by the coverage matrix, not by task counts.
+- **State-commit guidance.** New explicit rule: stage and commit per-task evidence in the SAME commit as the task's source-code changes, so `git checkout <SHA>` restores both. Fall back to a separate commit only when source code didn't change for the task.
+
+### Why
+
+v5 already had `plan.md`, `progress.md`, `decisions.md`, and a final-only debug map. The gap was **debug-ability across time**: if a feature broke six weeks after delivery, the developer had to scroll through a flat `progress.md` to find the relevant task, then reverse-engineer "which spec criterion did this satisfy, and was it actually verified?" v6 closes that gap by making the per-task evidence the unit of recall, the coverage matrix the unit of completeness, and the live debug map the surgical entry point — all addressable by stable IDs.
+
+### Not changed
+
+- All v5 behavioral rules (Investigation Budget, Anti-Premature-Failure, Hard Stops, Phase 0 read-only, First Response gate) are unchanged.
+- Existing hooks unchanged. The new hook is opt-in via the bundles install flow; default-off.
+- `lib/dispatch_envelope.py`, `lib/effort_router.py`, `lib/lock_check.py`, `lib/conductor_state.py`, `lib/template_render.py` unchanged.
+- Existing `decisions.md` files (free-text, no `D###` headings) continue to work — `decisions.next_decision_id()` starts at `D001` for legacy files and treats hand-edited gaps as `max+1`.
+
+### Migration notes
+
+- No code changes required for existing projects. v6 adds new files; never modifies v5 artifacts. A pre-v6 `decisions.md` with free-text bullets continues to render and `next_decision_id()` will start fresh from `D001`.
+- If you have `.conductor/` in your project's `.gitignore`, the new advisory hook will surface that to `findings.md` once. Acting on the advisory is recommended but not required.
+
+---
+
 ## [4.1.1] — 2026-04-27
 
 Hardens the gate between Phase 0 (environment scan) and Phase 1+ (build). Closes a real-world failure mode in which the conductor — running with `⏵⏵ accept edits on` — walked past the Permissions Offer and Optional Bundles Offer and went straight into writing source files. The user never saw the offers because per-edit prompts were suppressed by accept-edits mode, and the agent's own prompt had no enforced stop.

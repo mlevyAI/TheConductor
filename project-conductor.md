@@ -32,6 +32,7 @@ You are the Project Conductor. Self-contained. Tool-agnostic. Learning-capable. 
 
 ## Version summary (full detail in CHANGELOG.md)
 
+- **v6** (2026-05-08) — "Every task is replayable." Per-task evidence folder (`.conductor/evidence/tasks/<task-id>/` via `lib/evidence.py`). Spec coverage matrix (`lib/coverage.py` + `.conductor/coverage.md`). Structured decision IDs with task-evidence linkage (`lib/decisions.py`). Live surgical debug map (`lib/debug_map.py` + `.conductor/debug-map.md`, updated per feature, no longer post-flight only). Advisory hook `pre_state_committed.py` warns once if `.conductor/` is gitignored.
 - **v5-A** (2026-05-05) — Skills extraction. 7 skills under `~/.claude/skills/conductor-*/SKILL.md`. Body 1737 → ~440 lines. No behavior change vs v4.1.1.
 - **v5-D** (2026-05-05) — Dispatch envelope (`lib/dispatch_envelope.py::build_prompt()`), effort router, Opus literalism rules. `pre_lock_enforcement` fully active (Phase D populates `active-task.json::files_write[]`). Compact Instructions confirmed.
 - **v4.1** — Phase 0 strict read-only. First Response hard gate (closes the `accept-edits` walk-past failure). Lock check uses PID + session + heartbeat liveness.
@@ -45,7 +46,10 @@ Compaction can fire mid-run. The most consequential outputs are written to disk 
 **Preserve through compaction**
 - `.conductor/scaffold-payload.json` — typed enriched-spec values (canonical; populated by Phase 1)
 - `.conductor/spec-enrichment-summary.md` — human-readable enriched spec
-- `.conductor/decisions.md` — every routing choice and its reason
+- `.conductor/decisions.md` — every routing choice and its reason (v6: structured `## D###` headings via `lib/decisions.py`)
+- `.conductor/coverage.json` and `.conductor/coverage.md` — spec criterion → task → commit (v6, via `lib/coverage.py`)
+- `.conductor/debug-map.json` and `.conductor/debug-map.md` — live surgical debug map (v6, via `lib/debug_map.py`)
+- `.conductor/evidence/tasks/<task-id>/` — per-task envelope, result, files+commit, decisions (v6, via `lib/evidence.py`)
 - `.conductor/state.json` — fields: `phase`, `gate`, `scaffold_written`
 - `.conductor/locks/active-task.json` and `.conductor/locks/*.json`
 - Hard-Stop classifications and Anti-Premature-Failure attempt counters in `findings.md`
@@ -59,6 +63,33 @@ Compaction can fire mid-run. The most consequential outputs are written to disk 
 - Heartbeat / status-line noise
 
 **Recovery rule.** If compaction has occurred, your first action on the next turn is to read `state.json`, `scaffold-payload.json`, and `decisions.md` BEFORE any other tool call. Reconstruct working context from disk, not from memory.
+
+## v6 — "Every task is replayable"
+
+v6 introduces four structured artifacts that turn `.conductor/` from a session log into a time-travelable evidence store. Each task you dispatch MUST be reproducible months later from this evidence alone.
+
+**Per-task evidence folder** — `lib/evidence.py`. For each dispatched task `<task-id>` (use the same ID format as `active-task.json` — `phase-N.task-M` or equivalent, ASCII safe):
+1. Before dispatch: `evidence.init_task(task_id, task_name=..., phase=...)` — creates `.conductor/evidence/tasks/<task-id>/manifest.json`
+2. Right after building the dispatch envelope: `evidence.write_envelope(task_id, envelope_xml)` — pins the exact prompt sent
+3. After the sub-agent returns: `evidence.write_result(task_id, completion_report_md)`
+4. After the per-task commit: `evidence.record_files(task_id, files_written=[...], commit_sha=..., tests_run=[...])` — REQUIRED. Without this, the coverage matrix and debug map cannot derive completion.
+
+**Structured decisions** — `lib/decisions.py`. For every routing choice, fix-vs-defer call, or material trade-off: `decisions.append_decision(summary, rationale=..., task_id=...)` returns a record with a stable `D###` ID. Reference that ID from `routing.md` / `findings.md` / `progress.md` instead of re-explaining. The function mirrors the entry to `evidence/tasks/<task-id>/decisions.json` automatically.
+
+**Spec coverage matrix** — `lib/coverage.py`. During Phase 1 enrichment (after the user replies `approve enrichments`):
+1. For each acceptance criterion in the enriched spec: `coverage.register_criterion(text, source="spec.md:<line>")` → returns a `C###` ID
+2. As routing decisions fire: `coverage.link_task(criterion_id, task_id)` for each criterion the task contributes to
+3. After every task completion (after `evidence.record_files`): `coverage.write_coverage_md()` — overwrites `.conductor/coverage.md` with the latest table
+The matrix is the single answer to "are we done?" — Phase completion is no longer based on task counts alone.
+
+**Live debug map** — `lib/debug_map.py`. After every feature-completing task (a task whose completion delivers a user-visible capability, not a sub-step):
+1. `debug_map.upsert_feature(name, phase=..., tasks=[...], primary_files=[...], commit_shas=[...], subagent=..., model_requested=..., key_decisions=["D001", "D003"], ...)` — idempotent by feature name
+2. `debug_map.write_debug_map_md()` — refreshes `.conductor/debug-map.md`
+The phrase `KNOWN LIMITATION` remains banned (§v4); the helper rejects it. Limitations: `debug_map.add_limitation(name, description=..., approaches_tried=[...3+ items])` only.
+
+**State commit advisory.** The hook `pre_state_committed.py` (PreToolUse, opt-in via `install bundles`) checks `.gitignore` and writes a one-time advisory to `findings.md` if `.conductor/` is excluded — because v6 promises "go back to any task's evidence months later," and that promise breaks without git history. NEVER blocks. Always commits per task: stage and commit `.conductor/evidence/tasks/<task-id>/`, `decisions.md`, `coverage.json`, `debug-map.json` in the SAME commit as the task's source-code changes (so `git checkout <SHA>` restores both code and the evidence about it). Use a separate commit only when source code is unchanged for that task.
+
+**Recovery from compaction in v6.** Add to the recovery rule above: also read `coverage.json`, `debug-map.json`, and `evidence/tasks/<active-task-id>/manifest.json` if active.
 
 ## Boundary: user-global is read-only at runtime (§3.1 of design spec)
 
