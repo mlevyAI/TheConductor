@@ -156,69 +156,7 @@ Allowed while waiting: `Read`, `Grep`, `Glob`, and read-only `Bash` if the user 
 
 ### Response template
 
-```
-## Project Conductor — Environment Scan Complete
-
-### ⚙️ Running configuration
-- **Conductor model**: [opus / sonnet / haiku] + [low / medium / high] effort
-- **Estimated cost tier**: [💰 low / 💰💰 medium / 💰💰💰 high]
-- **To change**: edit `model:` in this agent's frontmatter
-
-### 🔍 What I found
-**Subagents (N total, M planned for use):** [counts; list only those likely to be used based on spec]
-**Skills (N):** [list with triggers]
-**MCPs connected (N):** [list with capabilities]
-**CLIs detected:** [project-relevant only]
-**Plugins:** [list]
-
-### 📋 Spec analysis
-- File: [path]
-- Phases: [N]
-- Tasks decomposed: [~N]
-- Complexity: [low/medium/high]
-- **Estimated token budget: ~XXX k** (small/medium/large)
-
-### 🎯 Notable routing decisions
-- Task "[name]": using [tool] because [reason]
-- [3–5 examples]
-- Note: model routing is best-effort; see Model Routing Caveat (Phase 2)
-
-### ✍️ Spec enrichment
-I've annotated your spec with `<!-- Added by Conductor -->` markers.
-Original backed up to `[path].original.md`.
-
-### 🔐 Permissions setup offer
-[See Permissions Offer below — MANDATORY]
-
-### 📦 Optional bundles offer
-[See Optional Bundles Offer below — MANDATORY to surface, optional for user to accept]
-
-### ⚠️ Known interruption points ahead
-[List anticipated stops]
-
-### 🚫 Capability gaps
-[If any]
-
-### 💰 Budget acknowledgment
-I will surface notifications at ~70% / ~95% of estimated budget; work continues unless you ask me to pause.
-
-### 🛑 Safety mechanisms active
-- **Turn checkpoint notification** every 25 turns (informational; opt into `--strict-mode` for v3 pause-and-confirm)
-- **Spec enrichment review** required before Phase 2
-- **Canary model check** before phases dispatching ≥3 tasks at non-default model
-- **Lock enforcement** via `git diff --name-only` after each dispatch
-- **Permissions sanity test** before writing `.claude/settings.json`
-- **Investigation budget** (caps probe artifacts before MUST commit to draft)
-- **Anti-Premature-Failure** (≥3 distinct approaches before declaring impossible)
-- **Output-quality completeness** check after every structured output write
-- **Heartbeat file** for backgrounded mode visibility
-
-### ❓ Pre-execution questions
-[Only if blocking]
-
-### 🚀 Ready to proceed?
-Reply "proceed" to begin, or address the permissions offer first. Ask "status" at any point during execution.
-```
+→ **invoke skill `conductor-first-response`** to render the canonical Environment Scan Complete envelope (running config, capabilities, spec analysis, routing decisions, permissions/bundles offers, safety mechanisms active, capability gaps, pre-execution questions, ready-to-proceed prompt). The skill is one-shot per session and is invoked only after `conductor-phase-0-discovery` returns. The hard gate above governs the wait-for-`proceed` semantics; the skill renders the envelope the gate is protecting. The `Permissions Offer` and `Optional Bundles Offer` sections that follow in this body remain the source of truth for those two sub-blocks — the skill points to them rather than duplicating their text.
 
 ## Permissions Offer
 

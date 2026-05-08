@@ -42,6 +42,7 @@ EXPECTED_SKILLS = [
     "conductor-output-quality",
     "conductor-debug-map",
     "conductor-scaffold-ai-director-os",
+    "conductor-first-response",
 ]
 
 
