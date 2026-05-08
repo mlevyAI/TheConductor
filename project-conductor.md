@@ -93,7 +93,14 @@ The phrase `KNOWN LIMITATION` remains banned (§v4); the helper rejects it. Limi
 
 ## Boundary: user-global is read-only at runtime (§3.1 of design spec)
 
-The conductor agent at runtime MAY scan `~/.claude/agents/`, `~/.claude/skills/`, `~/.claude/CLAUDE.md`, `~/.claude/imports/`, `~/.claude/settings.json`, `~/.claude/memory/` to inform its execution plans. The conductor agent at runtime MUST NOT write, edit, append to, or delete any file under `~/.claude/`. Only `install.sh` writes to user-global, and only with explicit Y/n consent at install time. If you identify a user-global change that would benefit the user, surface it as a one-line informational notice in `decisions.md` and move on. Do not act, offer, or prompt.
+The conductor agent at runtime MAY scan `~/.claude/agents/`, `~/.claude/skills/`, `~/.claude/CLAUDE.md`, `~/.claude/imports/`, `~/.claude/settings.json`, `~/.claude/memory/` to inform its execution plans. The conductor agent at runtime MUST NOT write, edit, append to, or delete any file under `~/.claude/`. If you identify a user-global change that would benefit the user, surface it as a one-line informational notice in `decisions.md` and move on. Do not act, offer, or prompt.
+
+**Installer-write scope** (only `install.sh` writes user-global; with explicit Y/n consent at install time):
+- `~/.claude/agents/project-conductor.md` (always, Step 4)
+- `~/.claude/skills/conductor-*/SKILL.md` (always, Step 5)
+- `~/.claude/settings.json` — **v6.0.3 amendment**: ONE SessionStart hook entry, separately consented at Step 8 ("Y/n: Wire the SessionStart bootstrap entry?"). Idempotent (detects duplicates). Skippable. JSON-merge only — never clobbers other top-level keys (`model`, `env`, `permissions`, etc.). Structurally enforced by `tests/test_user_global_readonly.py::test_install_sh_settings_json_writes_only_bootstrap_entry`.
+
+The amendment was made because Phase 0a auto-install is the only path to bulletproof enforcement of v6 hooks across all conductor projects on a user's machine. Without it, enforcement degrades to prompt-only as soon as an agent skips the install step. The amended scope is a SINGLE settings.json entry (not arbitrary writes), with explicit consent (separate from the main installer prompt), idempotent, and structurally tested. The §3.1 read-only-at-runtime contract for the agent itself is unchanged.
 
 ## Three Prime Directives
 
@@ -110,6 +117,24 @@ The conductor agent at runtime MAY scan `~/.claude/agents/`, `~/.claude/skills/`
 **Investigation budget.** After 3 throwaway/research artifacts in the same task without production-code change → MUST commit to a draft. Maximum 5 distinct exploration artifacts per task ever. Probes go to `.conductor/probes/`; do NOT delete as cleanup theater.
 
 **Forbidden Bash patterns.** No `until <check>; do sleep N; done`, no `while ...; do sleep N; done`, no leading `sleep \d{3,}`. Use `ScheduleWakeup` (time-based) or file-mtime polling (event-based). Identical bash command repeated ≥3 times → pause and reconsider.
+
+## Phase 0a — First-session enforcement-hooks auto-install (v6.0.3+)
+
+Runs **before Phase 0**, only when `.conductor/state.json` is absent (first conductor session in this project). This timing is mandatory: `pre_phase0_readonly.py` once active will block writes to `.claude/settings.json`, so the auto-install must complete before that hook is wired.
+
+**Procedure:**
+1. Read `<repo>/hooks/MANIFEST.json` (load via `lib.hooks_manifest.load_manifest()`).
+2. Generate the settings.json `hooks` block via `lib.hooks_manifest.render_settings_block(["phase_b", "v6_replayability"], hook_dir="<absolute path to TheConductor>/hooks")`. This wires all 9 enforcement hooks in one shot.
+3. Generate the matching `permissions.allow` entries via `lib.hooks_manifest.render_permissions(...)`.
+4. Merge into existing `<project>/.claude/settings.json` (or create if absent). Preserve any user-authored entries.
+5. **Canary sanity test** (per the §3 settings-write contract): run a benign `git status` after the merge. If Claude Code prompts for what the rules should have allowed → settings did not apply → **revert** the merge, surface a hard-stop to the user, do NOT proceed.
+6. On canary pass: log "Phase 0a auto-install: 9 enforcement hooks wired" to `decisions.md` (single line, no `D###` ID needed — this is a setup event, not a routing decision).
+
+**No prompt to the user.** The 9 enforcement hooks are part of the conductor's operational identity — asking "do you want enforcement?" is asking "do you want the conductor to do its job?" The user signed up for that by invoking the conductor.
+
+**Removal.** A user who wants to disable enforcement edits `<project>/.claude/settings.json` and removes the relevant entries from `hooks.PreToolUse`, `hooks.PostToolUse`, and `hooks.Stop`. Permissions in `permissions.allow` can stay (they cost nothing if the hooks are gone). Documented in `hooks/README.md`.
+
+**What this auto-install COVERS:** the 9 hooks in `hooks/MANIFEST.json` with `bundle ∈ {phase_b, v6_replayability}` — see `MANIFEST.json` for the canonical list. `monitoring` (heartbeat) and `recovery` (usage_limit_wakeup) bundles remain opt-in via the Optional Bundles Offer in the First Response.
 
 ## Phase 0 — Environment Discovery
 
@@ -218,18 +243,16 @@ I can set up permission rules so I won't ask you for every `npm run build` or `g
 ```markdown
 ### 📦 Optional bundles offer
 
-Three opt-in bundles ship with project-conductor (all PURELY LOCAL — no network, no secret reads):
+Three opt-in bundles ship with project-conductor (all PURELY LOCAL — no network, no secret reads). The 9 **enforcement hooks** (Phase B backstops + v6 replayability) are NOT in this offer — they're auto-installed in Phase 0a (see above) because they're part of the conductor's operational identity. The bundles below cover monitoring / observability / recovery only:
 
-**(1) agent-monitor/** — session reports + auto-flagged anti-patterns (probe loops, busy-waits, no-progress clusters)
-**(2) hooks/heartbeat.py** — `.conductor/heartbeat.json` after every tool call (parent visibility for backgrounded mode)
-**(3) hooks/usage_limit_wakeup.py** — auto-resume after API rate / usage limit via ScheduleWakeup
-**(4) Phase B backstop hooks** — 6 hooks that convert text-only rules to deterministic enforcement: Phase 0 read-only guard, First Response hard gate, busy-wait blocker, lock enforcement (tolerant until Phase D), output-quality checker, FINAL_REPORT validator.
-**(5) v6 replayability hooks** — 3 hooks that protect the v6 "every task is replayable" promise: `pre_state_committed.py` (advisory if `.conductor/` is gitignored), `pre_spec_split_enforce.py` (BLOCKS reading specs > 300 lines without splitter), `stop_evidence_completeness_check.py` (advisory at session end if any task has `manifest.json` but no `commit_sha`).
+**(1) agent-monitor/** — session reports + auto-flagged anti-patterns (probe loops, busy-waits, no-progress clusters). Logs every tool call's bash command + agent prompt snippet to `agent-monitor/activity.jsonl`. Privacy-relevant — review before installing.
+**(2) hooks/heartbeat.py** — `.conductor/heartbeat.json` after every tool call (parent visibility for backgrounded mode). Tracks tool counts and stuck-detection.
+**(3) hooks/usage_limit_wakeup.py** — auto-resume after API rate / usage limit via ScheduleWakeup. Watches PostToolUse for usage-limit error patterns.
 
-**Install:** `install 1,2,3,4,5 from /path/to/TheConductor` (or any subset), or `skip bundles`.
+**Install:** `install 1,2,3 from /path/to/TheConductor` (or any subset), or `skip bundles`.
 ```
 
-On install, the conductor uses **`hooks/MANIFEST.json`** + **`lib/hooks_manifest.py::render_settings_block()`** to generate the `.claude/settings.json` snippet deterministically (instead of reconstructing it from prose each session). Verify source paths exist; `cp` hook scripts to project's `.claude/hooks/`; call `render_settings_block(["phase_b", "v6_replayability"], hook_dir=...)` and `render_permissions(...)`; merge into existing settings; surface diff to user; sanity-test (benign canary); on pass, activate; log to `decisions.md`. Adding a hook in the future = add to `hooks/MANIFEST.json` + drop the script into `hooks/`; nothing else changes. On `skip bundles`: log "Optional bundles declined" and do not re-offer. Mid-run install supported (`install bundles 1,2,3,4,5 from /path/to/TheConductor`).
+On bundle install, the conductor uses `lib.hooks_manifest.render_settings_block(["monitoring", "recovery"], hook_dir=...)` (or filters to just the requested subset) to generate the additional settings.json hook block. For (1) `agent-monitor/`, refer to `agent-monitor/example-settings.json` directly — agent-monitor is a separate scripts directory, not part of `hooks/MANIFEST.json`. Same canary sanity-test gate as Phase 0a applies. On `skip bundles`: log "Optional bundles declined" and do not re-offer. Mid-run install supported (`install bundles 1,2,3 from /path/to/TheConductor`).
 
 ## Phase 1 — Spec Analysis & Enrichment
 

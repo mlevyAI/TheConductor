@@ -76,6 +76,106 @@ def _make_large_spec(path: Path, lines: int = 600):
     path.write_text("\n".join(body))
 
 
+def _ts() -> str:
+    """Stable-ish timestamp for chronological logs."""
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _append_progress(cwd: Path, line: str) -> None:
+    """Append a chronological log line to progress.md (the conductor maintains
+    this throughout a session)."""
+    p = cwd / ".conductor" / "progress.md"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    with p.open("a", encoding="utf-8") as f:
+        f.write(f"- {_ts()} {line}\n")
+
+
+def _write_status(cwd: Path, *, phase: str, task: str, note: str = "") -> None:
+    """Overwrite status.md with current phase + task + free-form note. The
+    conductor updates this on every phase/task transition."""
+    p = cwd / ".conductor" / "status.md"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(
+        f"# Status\n\n"
+        f"- **phase**: {phase}\n"
+        f"- **task**: {task}\n"
+        f"- **updated_at**: {_ts()}\n"
+        + (f"- **note**: {note}\n" if note else ""),
+        encoding="utf-8",
+    )
+
+
+def _append_routing(cwd: Path, *, task_id: str, subagent: str, model: str,
+                    complexity: int, reason: str) -> None:
+    """Append a routing decision to routing.md."""
+    p = cwd / ".conductor" / "routing.md"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    head = "" if p.exists() else "# Routing Log\n"
+    with p.open("a", encoding="utf-8") as f:
+        if head:
+            f.write(head + "\n")
+        f.write(
+            f"## {task_id}\n"
+            f"- **subagent**: {subagent}\n"
+            f"- **model**: {model}\n"
+            f"- **complexity**: {complexity}/10\n"
+            f"- **reason**: {reason}\n\n"
+        )
+
+
+def _update_plan(cwd: Path, tasks: list[dict]) -> None:
+    """Overwrite plan.md with the full task list and current statuses."""
+    p = cwd / ".conductor" / "plan.md"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    rows = ["# Plan", "", "| Task | Name | Status | Files |", "|---|---|---|---|"]
+    for t in tasks:
+        files = ", ".join(f"`{f}`" for f in t.get("files", [])) or "—"
+        rows.append(f"| {t['id']} | {t['name']} | {t['status']} | {files} |")
+    p.write_text("\n".join(rows) + "\n", encoding="utf-8")
+
+
+def _update_budget(cwd: Path, *, used: int, total: int) -> None:
+    """Overwrite budget.md with token usage."""
+    p = cwd / ".conductor" / "budget.md"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    pct = (used * 100) // total if total else 0
+    p.write_text(
+        f"# Budget\n\n"
+        f"- **used**: {used:,} tokens\n"
+        f"- **total**: {total:,} tokens\n"
+        f"- **utilization**: {pct}%\n",
+        encoding="utf-8",
+    )
+
+
+def _write_environment(cwd: Path, *, subagents: list[str], skills: list[str],
+                       mcps: list[str]) -> None:
+    """Overwrite environment.md with the Phase 0 capability inventory."""
+    p = cwd / ".conductor" / "environment.md"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(
+        f"# Environment Inventory (Phase 0)\n\n"
+        f"## Subagents ({len(subagents)})\n" + "\n".join(f"- {s}" for s in subagents) + "\n\n"
+        f"## Skills ({len(skills)})\n" + "\n".join(f"- {s}" for s in skills) + "\n\n"
+        f"## MCPs ({len(mcps)})\n" + "\n".join(f"- {m}" for m in mcps) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _write_scaffold_payload(cwd: Path, payload: dict) -> None:
+    """Overwrite scaffold-payload.json (canonical typed enriched-spec values)."""
+    p = cwd / ".conductor" / "scaffold-payload.json"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
+def _write_spec_enrichment_summary(cwd: Path, body: str) -> None:
+    p = cwd / ".conductor" / "spec-enrichment-summary.md"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(body, encoding="utf-8")
+
+
 def _simulate_splitter(cwd: Path):
     """The conductor-spec-splitter skill, simulated as a no-op data write."""
     sp = cwd / ".conductor" / "spec-parts"
@@ -453,3 +553,374 @@ def test_phase_b_plus_v6_settings_render_includes_all_exercised_hooks(tmp_path):
             f"hook {name!r} exercised by lifecycle but not wired by "
             "render_settings_block(['phase_b', 'v6_replayability'])"
         )
+
+
+# ---------------------------------------------------------------------------
+# Full conductor session — every state file the conductor writes during a
+# real run, in the order it would write them. Proves v3-v5 state files
+# coexist with v6 evidence/coverage/decisions/debug-map without conflict.
+# ---------------------------------------------------------------------------
+
+def test_full_conductor_session_writes_all_state_files(tmp_path):
+    """Walk a complete conductor session from spec submission to FINAL_REPORT,
+    creating *every* state file listed in `Compact Instructions` and the
+    Phase 1/2/3 sections of project-conductor.md.
+
+    Verifies:
+      - state.json transitions: phase 0 → 1 → 2 → complete (4 transitions)
+      - v3-v5 files appear: environment, plan, status, progress, routing,
+        budget, scaffold-payload, spec-enrichment-summary
+      - v6 files appear alongside without conflict: evidence, coverage,
+        decisions, debug-map
+      - Hooks fire correctly at each transition (gate, lock, splitter)
+      - Final state on disk is internally consistent: plan completion
+        matches coverage matrix matches debug-map features
+    """
+    project = tmp_path
+    spec = project / "spec.md"
+    _make_large_spec(spec, lines=600)
+
+    # ============================================================
+    # Phase 0 — Environment Discovery (read-only, gate locked)
+    # ============================================================
+    _write_state(project, phase="0", gate="pre_first_response_proceed",
+                 scaffold_written=False)
+    _write_status(project, phase="0", task="environment scan",
+                  note="conductor session start")
+    _append_progress(project, "session start; Phase 0 scan begins")
+
+    _write_environment(
+        project,
+        subagents=["general-purpose", "code-reviewer", "Plan", "Explore"],
+        skills=[
+            "conductor-phase-0-discovery",
+            "conductor-spec-splitter",
+            "conductor-spec-enrichment",
+            "conductor-routing-rubric",
+            "conductor-classification",
+            "conductor-output-quality",
+            "conductor-debug-map",
+            "conductor-scaffold-ai-director-os",
+        ],
+        mcps=[],
+    )
+    _append_progress(project, "environment.md written; capability inventory complete")
+
+    # First Response gate active: any Write to source must be blocked
+    src_target = project / "src" / "auth.py"
+    src_target.parent.mkdir(parents=True, exist_ok=True)
+    r = _run_hook(
+        "pre_first_response_gate.py", project,
+        {"tool_name": "Write", "tool_input": {"file_path": str(src_target)}},
+    )
+    assert r.returncode == 2
+
+    # spec-split-enforce blocks the spec read in Phase 0 too (no manifest yet)
+    r = _run_hook(
+        "pre_spec_split_enforce.py", project,
+        {"tool_name": "Read", "tool_input": {"file_path": str(spec)}},
+    )
+    assert r.returncode == 2
+
+    # ============================================================
+    # User replies "proceed" → state transitions; gate opens
+    # ============================================================
+    _write_state(project, phase="1", gate="post_first_response_proceed",
+                 scaffold_written=False)
+    _write_status(project, phase="1", task="spec analysis & enrichment",
+                  note="user replied proceed; gate opened")
+    _append_progress(project, "user replied proceed; state.gate opened")
+
+    # Gate is now permissive
+    r = _run_hook(
+        "pre_first_response_gate.py", project,
+        {"tool_name": "Write", "tool_input": {"file_path": str(src_target)}},
+    )
+    assert r.returncode == 0
+
+    # spec-split-enforce still blocks until splitter runs — proves the
+    # two hooks are independent gates
+    r = _run_hook(
+        "pre_spec_split_enforce.py", project,
+        {"tool_name": "Read", "tool_input": {"file_path": str(spec)}},
+    )
+    assert r.returncode == 2
+
+    # ============================================================
+    # Phase 1 — Spec splitter runs, enrichment + coverage registration
+    # ============================================================
+    _simulate_splitter(project)
+    _append_progress(project, "spec-splitter complete: 2 parts + global-header")
+
+    # Enriched-spec artifacts (canonical for compaction recovery)
+    _write_scaffold_payload(project, {
+        "stack": "Python 3.12 + SQLite + FastAPI",
+        "auth_model": "email + bcrypt-hashed password",
+        "out_of_scope": ["payments", "i18n"],
+        "phases": 2,
+    })
+    _write_spec_enrichment_summary(
+        project,
+        "# Spec Enrichment Summary\n\n"
+        "**Original**: 600 lines, 2 acceptance criteria detected.\n"
+        "**Enriched**: complexity scores per task, files-write annotations.\n",
+    )
+
+    c1 = coverage.register_criterion(
+        "User can sign up with email + password",
+        source="spec.md:42", cwd=project,
+    )
+    c2 = coverage.register_criterion(
+        "User can log in and gets a session",
+        source="spec.md:55", cwd=project,
+    )
+    coverage.write_coverage_md(cwd=project)
+    _append_progress(project, f"registered criteria {c1.criterion_id}, {c2.criterion_id}")
+
+    # ============================================================
+    # Phase 2 — Continuous execution. Task 1: signup
+    # ============================================================
+    _write_state(project, phase="2", gate="post_first_response_proceed",
+                 scaffold_written=True)
+
+    plan = [
+        {"id": "p2.t1", "name": "Implement signup", "status": "pending",
+         "files": ["src/auth.py"]},
+        {"id": "p2.t2", "name": "Implement login", "status": "pending",
+         "files": ["src/login.py"]},
+    ]
+    _update_plan(project, plan)
+    _update_budget(project, used=8_000, total=120_000)
+
+    # ---- Task p2.t1 -----
+    _write_status(project, phase="2", task="p2.t1 Implement signup")
+    _append_routing(
+        project, task_id="p2.t1", subagent="general-purpose",
+        model="sonnet", complexity=5,
+        reason="standard CRUD; no security floor needed beyond bcrypt",
+    )
+
+    evidence.init_task("p2.t1", task_name="Implement signup endpoint",
+                       phase=2, cwd=project)
+    coverage.link_task(c1.criterion_id, "p2.t1", cwd=project)
+    _write_active_task(project, "p2.t1", files_write=["src/auth.py"])
+    _append_progress(project, "p2.t1 dispatched: signup endpoint")
+
+    envelope = build_prompt(
+        task="POST /signup accepts {email, password}, returns 201",
+        constraints="bcrypt; SQLite",
+        files_write=["src/auth.py"],
+        acceptance="POST /signup returns 201 with new user id",
+        complexity=5,
+        reminder="Hash before storing.",
+    )
+    evidence.write_envelope("p2.t1", envelope, cwd=project)
+
+    # Sub-agent simulated: lock-enforcement allows declared file
+    r = _run_hook(
+        "pre_lock_enforcement.py", project,
+        {"tool_name": "Write", "tool_input": {"file_path": str(src_target)}},
+    )
+    assert r.returncode == 0
+
+    src_target.write_text("def signup(): pass\n")
+    fake_sha_t1 = "abc123def456789a"
+    evidence.write_result("p2.t1", "# Done\nAll signup checks pass.", cwd=project)
+    evidence.record_files(
+        "p2.t1",
+        files_written=["src/auth.py"],
+        commit_sha=fake_sha_t1,
+        tests_run=["tests/test_auth.py"],
+        cwd=project,
+    )
+    decisions.append_decision(
+        "Use bcrypt for password hashing",
+        rationale="Audited; constant-time compare.",
+        task_id="p2.t1", cwd=project,
+    )
+    debug_map.upsert_feature(
+        "User signup", phase=2, tasks=["p2.t1"],
+        primary_files=["src/auth.py"], test_files=["tests/test_auth.py"],
+        commit_shas=[fake_sha_t1], subagent="general-purpose",
+        model_requested="sonnet", key_decisions=["D001"], cwd=project,
+    )
+    debug_map.write_debug_map_md(cwd=project)
+    coverage.write_coverage_md(cwd=project)
+
+    plan[0]["status"] = "complete"
+    _update_plan(project, plan)
+    _update_budget(project, used=24_000, total=120_000)
+    _append_progress(project, f"p2.t1 complete; commit {fake_sha_t1[:8]}")
+
+    # ---- Task p2.t2 -----
+    _write_status(project, phase="2", task="p2.t2 Implement login")
+    _append_routing(
+        project, task_id="p2.t2", subagent="general-purpose",
+        model="sonnet", complexity=4,
+        reason="parallel to signup; reuses bcrypt path",
+    )
+
+    login_target = project / "src" / "login.py"
+    login_target.parent.mkdir(parents=True, exist_ok=True)
+    evidence.init_task("p2.t2", task_name="Implement login endpoint",
+                       phase=2, cwd=project)
+    coverage.link_task(c2.criterion_id, "p2.t2", cwd=project)
+    _write_active_task(project, "p2.t2", files_write=["src/login.py"])
+    _append_progress(project, "p2.t2 dispatched: login endpoint")
+
+    envelope2 = build_prompt(
+        task="POST /login validates email+password against bcrypt hash",
+        constraints="reuse src/auth.py utilities",
+        files_write=["src/login.py"],
+        acceptance="POST /login returns 200 with session cookie",
+        complexity=4,
+        reminder="Constant-time compare.",
+    )
+    evidence.write_envelope("p2.t2", envelope2, cwd=project)
+    login_target.write_text("def login(): pass\n")
+    fake_sha_t2 = "def456abc789012b"
+    evidence.write_result("p2.t2", "# Done\nLogin works.", cwd=project)
+    evidence.record_files(
+        "p2.t2",
+        files_written=["src/login.py"],
+        commit_sha=fake_sha_t2,
+        tests_run=["tests/test_login.py"],
+        cwd=project,
+    )
+    decisions.append_decision(
+        "Sessions via signed cookie (no Redis dependency)",
+        rationale="In-memory project; one user; cookie suffices.",
+        task_id="p2.t2", cwd=project,
+    )
+    debug_map.upsert_feature(
+        "User login", phase=2, tasks=["p2.t2"],
+        primary_files=["src/login.py"], test_files=["tests/test_login.py"],
+        commit_shas=[fake_sha_t2], subagent="general-purpose",
+        model_requested="sonnet", key_decisions=["D002"], cwd=project,
+    )
+    debug_map.write_debug_map_md(cwd=project)
+    coverage.write_coverage_md(cwd=project)
+
+    plan[1]["status"] = "complete"
+    _update_plan(project, plan)
+    _update_budget(project, used=42_000, total=120_000)
+    _append_progress(project, f"p2.t2 complete; commit {fake_sha_t2[:8]}")
+
+    # ============================================================
+    # Phase complete — final report state
+    # ============================================================
+    _write_state(project, phase="complete", gate="post_first_response_proceed",
+                 scaffold_written=True)
+    _write_status(project, phase="complete", task="—",
+                  note="all tasks complete; FINAL_REPORT generated")
+
+    final_report = project / ".conductor" / "FINAL_REPORT.md"
+    final_report.write_text(
+        "# Final Report\n\n"
+        "## Executive Summary\nDelivered signup + login.\n\n"
+        "## Plan vs Actual\n2 of 2 tasks complete.\n\n"
+        "## Material Changes\nnone.\n\n"
+        "## Routing Notes\nsee routing.md.\n\n"
+        "## Safety Mechanism Outcomes\nclean.\n\n"
+        "## Surgical Debug Map\nsee debug-map.md.\n\n"
+        "## Outstanding Items\nnone.\n\n"
+        "## Evidence Index\nsee evidence/tasks/.\n\n"
+        "## Recommended Next Steps\nadd 2FA in v2.\n",
+        encoding="utf-8",
+    )
+    _append_progress(project, "FINAL_REPORT.md written; state.phase=complete")
+
+    # ============================================================
+    # Stop event — both Stop hooks fire; both must pass
+    # ============================================================
+    r = _run_hook("stop_validate_final_report.py", project)
+    assert r.returncode == 0
+    r = _run_hook("stop_evidence_completeness_check.py", project)
+    assert r.returncode == 0
+
+    # findings.md should be free of v6 evidence advisories: every task
+    # has a recorded commit_sha
+    findings = project / ".conductor" / "findings.md"
+    if findings.exists():
+        assert "incomplete v6 evidence" not in findings.read_text()
+
+    # ============================================================
+    # Verify every state file the conductor commits to disk exists
+    # ============================================================
+    cd = project / ".conductor"
+    must_exist = [
+        # v3-v5 state files
+        "state.json",
+        "environment.md",
+        "plan.md",
+        "status.md",
+        "progress.md",
+        "routing.md",
+        "budget.md",
+        "scaffold-payload.json",
+        "spec-enrichment-summary.md",
+        "FINAL_REPORT.md",
+        # spec-splitter outputs
+        "spec-parts/manifest.json",
+        "spec-parts/global-header.md",
+        "spec-parts/part-1.md",
+        "spec-parts/part-2.md",
+        # active-task lock
+        "locks/active-task.json",
+        # v6 artifacts
+        "decisions.md",
+        "coverage.json",
+        "coverage.md",
+        "debug-map.json",
+        "debug-map.md",
+        "evidence/tasks/p2.t1/manifest.json",
+        "evidence/tasks/p2.t1/envelope.xml",
+        "evidence/tasks/p2.t1/result.md",
+        "evidence/tasks/p2.t1/files.json",
+        "evidence/tasks/p2.t1/decisions.json",
+        "evidence/tasks/p2.t2/manifest.json",
+        "evidence/tasks/p2.t2/envelope.xml",
+        "evidence/tasks/p2.t2/result.md",
+        "evidence/tasks/p2.t2/files.json",
+    ]
+    missing = [p for p in must_exist if not (cd / p).exists()]
+    assert not missing, f"state files missing at session end: {missing}"
+
+    # ============================================================
+    # Cross-artifact consistency: plan + coverage + debug-map agree
+    # ============================================================
+    plan_md = (cd / "plan.md").read_text()
+    assert plan_md.count("complete") == 2  # both tasks marked complete
+
+    cov_md = (cd / "coverage.md").read_text()
+    assert "2/2 criteria complete (100%)" in cov_md
+
+    dbg_md = (cd / "debug-map.md").read_text()
+    assert "User signup" in dbg_md
+    assert "User login" in dbg_md
+    assert fake_sha_t1[:8] in dbg_md
+    assert fake_sha_t2[:8] in dbg_md
+
+    decisions_md = (cd / "decisions.md").read_text()
+    assert "## D001" in decisions_md
+    assert "## D002" in decisions_md
+    assert "p2.t1" in decisions_md and "p2.t2" in decisions_md
+
+    # state.json final form
+    state = json.loads((cd / "state.json").read_text())
+    assert state["phase"] == "complete"
+    assert state["scaffold_written"] is True
+
+    # progress.md tracks the chronology end-to-end
+    progress = (cd / "progress.md").read_text()
+    for marker in [
+        "session start", "user replied proceed", "spec-splitter complete",
+        "p2.t1 dispatched", "p2.t1 complete",
+        "p2.t2 dispatched", "p2.t2 complete",
+        "FINAL_REPORT.md written",
+    ]:
+        assert marker in progress, f"progress.md missing marker: {marker!r}"
+
+    # status.md reflects the terminal state
+    status = (cd / "status.md").read_text()
+    assert "phase**: complete" in status

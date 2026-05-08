@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# install.sh -- Install project-conductor + 7 skill directories into your Claude Code.
+# install.sh -- Install project-conductor + all conductor-*/ skill directories into your Claude Code.
 #
 # What this script does:
 #   1. Detects the repository root (wherever you git-cloned TheConductor).
@@ -64,7 +64,7 @@ usage() {
   cat <<'EOF'
 Usage: ./install.sh [--force] [--for-project <path>] [--help]
 
-Installs project-conductor + 7 skill directories into Claude Code.
+Installs project-conductor + all conductor-*/ skill directories into Claude Code.
 
 What happens:
   1. Detects this repository's path (the git clone root).
@@ -169,12 +169,8 @@ done
 
 if [[ "${#SKILL_DIRS[@]}" -eq 0 ]]; then
   err "No skill directories found at $REPO_ROOT/skills/conductor-*/"
-  err "Expected 7 skill directories, each containing a SKILL.md."
+  err "At least one skill directory containing a SKILL.md is required."
   exit 1
-fi
-
-if [[ "${#SKILL_DIRS[@]}" -ne 7 ]]; then
-  warn "Found ${#SKILL_DIRS[@]} skill directories (expected 7) — installer will proceed with what's present."
 fi
 
 # Optional bundle dir checks (warning only)
@@ -532,6 +528,114 @@ PYEOF
     warn "Template render canary: FAILED — lib/template_render.py may be broken."
   fi
   rm -f "$RENDER_CANARY_TARGET"
+fi
+
+# ---------------------------------------------------------------------------
+# Step 8 — User-global SessionStart bootstrap entry (v6.0.3+, opt-in)
+# ---------------------------------------------------------------------------
+# Adds a single SessionStart hook to ~/.claude/settings.json so that the
+# 9 enforcement hooks (Phase B + v6 replayability) are auto-installed into
+# every conductor project on first session — no manual "install bundles"
+# step. Conservative on its own: bootstrap_phase_0a.py is a no-op for
+# non-conductor sessions.
+#
+# This is the ONLY step in install.sh that modifies a user-global file
+# other than the agents/ and skills/ directories. Explicit Y/n consent
+# is required (separate from the main install consent at Step 3). Skipping
+# is supported — the conductor still works, but enforcement hooks have to
+# be wired manually per-project.
+#
+# §3.1 boundary, v6.0.3 amendment: install.sh may also write ONE
+# SessionStart hook entry to ~/.claude/settings.json with consent. The
+# settings.json file is treated as a JSON merge target (not a clobber
+# target) — existing keys outside our entry are preserved.
+# ---------------------------------------------------------------------------
+
+USER_SETTINGS="$HOME/.claude/settings.json"
+BOOTSTRAP_HOOK_PATH="$REPO_ROOT/hooks/bootstrap_phase_0a.py"
+
+if [[ -f "$BOOTSTRAP_HOOK_PATH" ]]; then
+  header "Step 8 — Bootstrap enforcement hooks"
+
+  printf "  Wires a SessionStart entry to ${C_BOLD}~/.claude/settings.json${C_RESET} so the\n"
+  printf "  9 enforcement hooks auto-install into every conductor project.\n\n"
+  printf "  Without this step, hooks must be wired per-project manually.\n"
+  printf "  The bootstrap script is a no-op for non-conductor Claude Code\n"
+  printf "  sessions (multi-signal detection, conservative default).\n\n"
+  printf "  This is the ONE place install.sh writes outside ~/.claude/skills/\n"
+  printf "  and ~/.claude/agents/. We need separate consent.\n\n"
+
+  BOOTSTRAP_DECISION=skip
+  if [[ "$FORCE" -eq 1 ]]; then
+    BOOTSTRAP_DECISION=install
+  else
+    printf "  Wire the SessionStart bootstrap entry? [Y/n] "
+    read -r answer </dev/tty
+    case "$answer" in
+      n|N|no|NO) BOOTSTRAP_DECISION=skip ;;
+      *) BOOTSTRAP_DECISION=install ;;
+    esac
+  fi
+
+  if [[ "$BOOTSTRAP_DECISION" = "install" ]]; then
+    mkdir -p "$HOME/.claude"
+    if python3 - "$USER_SETTINGS" "$BOOTSTRAP_HOOK_PATH" <<'PYEOF' 2>&1; then
+import json
+import os
+import sys
+from pathlib import Path
+
+settings_path = Path(sys.argv[1])
+hook_path = sys.argv[2]
+command = f'python3 "{hook_path}"'
+
+if settings_path.is_file():
+    try:
+        existing = json.loads(settings_path.read_text(encoding="utf-8"))
+        if not isinstance(existing, dict):
+            existing = {}
+    except Exception as e:
+        print(f"refusing to merge unreadable settings.json: {e}", file=sys.stderr)
+        sys.exit(1)
+else:
+    existing = {}
+
+# Idempotent: if the same command is already wired in any SessionStart
+# entry, don't duplicate.
+existing.setdefault("hooks", {})
+session_start = existing["hooks"].setdefault("SessionStart", [])
+
+already = False
+for outer in session_start:
+    if not isinstance(outer, dict):
+        continue
+    for inner in outer.get("hooks", []):
+        if isinstance(inner, dict) and inner.get("command") == command:
+            already = True
+            break
+    if already:
+        break
+
+if not already:
+    session_start.append({
+        "hooks": [
+            {"type": "command", "command": command, "async": True},
+        ],
+    })
+
+# Atomic write
+tmp = settings_path.with_suffix(settings_path.suffix + ".tmp")
+tmp.write_text(json.dumps(existing, indent=2, ensure_ascii=False), encoding="utf-8")
+os.replace(tmp, settings_path)
+print("ok" if not already else "noop")
+PYEOF
+      ok "Bootstrap entry wired in $USER_SETTINGS"
+    else
+      warn "Failed to wire bootstrap entry — see error above. Conductor still works; per-project hook install needed."
+    fi
+  else
+    dim "  Skipped bootstrap entry — wire hooks per-project manually if you want enforcement."
+  fi
 fi
 
 # ---------------------------------------------------------------------------

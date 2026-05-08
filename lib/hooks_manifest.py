@@ -23,7 +23,7 @@ import os
 from pathlib import Path
 
 VALID_EVENTS = {"PreToolUse", "PostToolUse", "Stop", "SessionStart"}
-VALID_BUNDLES = {"phase_b", "v6_replayability", "monitoring", "recovery"}
+VALID_BUNDLES = {"phase_b", "v6_replayability", "monitoring", "recovery", "bootstrap"}
 REQUIRED_FIELDS = {"name", "event", "bundle", "blocking", "since_version", "description"}
 
 

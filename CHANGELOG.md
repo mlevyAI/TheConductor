@@ -8,6 +8,64 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [6.0.3] — 2026-05-08
+
+Four changes that close the operational loop on v6 — and one architectural amendment to §3.1 to make Layer 4 enforcement actually work:
+
+1. **Phase 0a — first-session auto-install of all 9 enforcement hooks.** Previously the conductor would describe the Phase B + v6 hooks in a "bundles offer" and wait for the user to reply `install 1,2,3,4,5`. In practice users skipped or partially accepted, leaving prompt-only rules without hook-level enforcement. v6.0.3 makes the 9 enforcement hooks auto-install on first conductor session in a project — no user prompt, they're part of the conductor's operational identity.
+2. **Optional Bundles Offer reduced to 3 items.** Now offers only (1) `agent-monitor/`, (2) `hooks/heartbeat.py`, (3) `hooks/usage_limit_wakeup.py` — the monitoring/recovery hooks that legitimately warrant explicit consent (they observe tool calls + record activity).
+3. **`install.sh` skill-count constants removed.** The installer hardcoded "7 skills" in three places plus a numeric `-ne 7` guard. With 8 skills present since v5-D the guard fired a spurious warning every run. v6.0.3 removes all hardcoded counts; the installer operates on whatever `conductor-*/` skills are present.
+4. **Layer-4 enforcement: `bootstrap_phase_0a.py` SessionStart hook + install.sh Step 8.** The Phase 0a description in (1) above is prompt-only — if the agent skipped Phase 0a, no hook caught it (chicken-and-egg: hooks weren't installed yet). v6.0.3 closes this with a SessionStart hook wired ONCE in user-global `~/.claude/settings.json` by `install.sh` (with separate Y/n consent). On every Claude Code session start, the bootstrap hook checks if it's a conductor session (multi-signal heuristic: existing `.conductor/`, payload mention of `project-conductor`, existing enforcement hooks reference, or `spec.md` + `CLAUDE.md` naming the conductor). If yes AND the 9 hooks aren't already wired in `<project>/.claude/settings.json`, it auto-installs them via `lib.hooks_manifest.render_settings_block(["phase_b", "v6_replayability"], ...)` and `render_permissions(...)`. Conservative no-op for non-conductor sessions. Idempotent. Atomic JSON merge. Logs to `<project>/.conductor/decisions.md`.
+
+### Added
+
+- **`hooks/bootstrap_phase_0a.py`** — SessionStart hook (Layer 4). 200 lines. Conservative multi-signal detection (4 signals must align before acting). Atomic JSON merge into `<project>/.claude/settings.json`. Preserves user-authored entries. Logs to `decisions.md`. Catches all exceptions and exits 0 (never blocks Claude Code).
+- **`hooks/MANIFEST.json` `bundle: bootstrap`** — new bundle category for the SessionStart hook (separate from `phase_b`/`v6_replayability` because it's user-global, not per-project).
+- **`install.sh` Step 8** — new step at end of installer: separate Y/n consent ("Wire the SessionStart bootstrap entry?"), inline Python heredoc for atomic JSON merge of `~/.claude/settings.json`, idempotent (detects duplicate command), preserves all other settings.json keys.
+- **`project-conductor.md` Phase 0a section** — runs before Phase 0 when `.conductor/state.json` is absent. Documents the bootstrap-hook-driven install path and the 4-layer enforcement chain (prompt → test → skill → SessionStart hook).
+- **`hooks/README.md` rewrite** — documents both install paths (Layer 4 auto vs opt-in bundles), shows the full hook inventory in tables, includes `Removing the auto-installed enforcement hooks` section per the user choice "always install, document removal".
+- **`tests/test_bootstrap_phase_0a.py`** (15 tests) — covers conservative no-op for non-conductor sessions, each detection signal in isolation, idempotency under repeated invocation, settings.json merge preservation, JSON corruption recovery, "always exit 0" failure-safety, the spec-md-alone-doesn't-trigger negative case.
+- **`tests/test_prompt_phase_0a.py`** (12 tests) — pin the prompt contract: Phase 0a section exists, runs before Phase 0, references manifest + render, documents removal; bundles offer no longer mentions (4) or (5); install command reads `install 1,2,3`; `hooks/README.md` references Phase 0a + MANIFEST.json + removal path.
+- **`tests/test_installer_skill_count.py`** (4 tests) — pin the installer: forbid `7 skill directories` / `-ne 7` strings (and inverse `8`/`-ne 8`); every `conductor-*/` directory has a SKILL.md; the empty-skills error path still exists.
+- **`tests/test_v6_e2e_integration.py::test_full_conductor_session_writes_all_state_files`** — comprehensive lifecycle test that creates EVERY state file the conductor writes during a real session.
+
+### Changed (§3.1 amendment)
+
+- **`project-conductor.md` §3.1** — installer-write scope amended to permit ONE SessionStart entry in `~/.claude/settings.json`, with explicit Y/n consent at Step 8, structurally enforced by the new `test_install_sh_settings_json_writes_only_bootstrap_entry` test. The runtime read-only contract for the agent itself is unchanged.
+- **`tests/test_user_global_readonly.py`** — `~/.claude/settings.json` removed from `FORBIDDEN_WRITE_TARGETS` and added to `ALLOWED_WRITE_TARGETS`. Two new structural tests: `test_install_sh_settings_json_writes_only_bootstrap_entry` (asserts the Step 8 PYEOF block touches `hooks.SessionStart` only, never clobbers `model`/`env`/`permissions`) and `test_install_sh_bootstrap_entry_is_idempotent` (asserts dedup logic is present).
+
+### Changed
+
+- **`install.sh`** — line 3, 67, 172 strings de-numerified ("7 skill directories" → "all conductor-*/ skill directories" etc.). Lines 176-178 (the `-ne 7` warning block) removed entirely. The empty-case error at line 170-174 preserved.
+- **`project-conductor.md` Optional Bundles Offer** — three opt-in bundles (was five). The auto-install of (4) and (5) is now in Phase 0a.
+
+### Why "always install, no prompt"
+
+Asking "do you want enforcement?" is functionally asking "do you want the conductor to do its job?" The user signed up for that by invoking the conductor. The previous opt-in flow added friction without adding meaningful choice — in practice it produced a population of conductor sessions running prompt-only rules without the hook safety net. v6.0.3 takes the position: enforcement is part of the contract; if you want the conductor without enforcement, edit `settings.json` to remove the hooks (one-time, persistent, not session-by-session).
+
+### Migration
+
+- Existing projects that already accepted bundles 4+5 manually: nothing changes; the auto-install path detects existing entries via `lib.hooks_manifest` and is idempotent.
+- Existing projects that declined bundles 4+5: on the next conductor session, Phase 0a will auto-install the 9 enforcement hooks. No prompt. Documented removal path is editing `settings.json` directly.
+- New projects: Phase 0a runs on first session, before any source-file work. Adds ~2 seconds + a canary `git status`.
+
+### Enforcement chain (4 layers, post-v6.0.3)
+
+| Layer | What it does | Active? |
+|---|---|---|
+| 1. Prompt-level | `project-conductor.md` § Phase 0a describes the auto-install | ✅ always |
+| 2. Test-level | `test_prompt_phase_0a.py` pins the prompt contract | ✅ in CI |
+| 3. Skill-level | (would be the conductor-phase-0-discovery skill performing the install) | ❌ not done — would violate skill's read-only contract |
+| 4. Runtime hook | `bootstrap_phase_0a.py` SessionStart hook in user-global ~/.claude/settings.json | ✅ active when install.sh Step 8 was Y |
+
+Layers 1+2+4 give bulletproof enforcement when the user accepted Step 8 at install time. If they declined Step 8 (or use `--force` without it), enforcement drops to prompt-only — documented as the manual fallback path. The bootstrap hook is the *only* component that crosses the §3.1 boundary, with explicit consent and structurally limited scope (single SessionStart entry, JSON-merge only).
+
+### Tests
+
+373 total (358 → 373; +15 from `test_bootstrap_phase_0a.py`). 100% passing. Hook precedence table from v6.0.2 still holds — the new auto-install path uses the same `render_settings_block` that v6.0.2 introduced.
+
+---
+
 ## [6.0.2] — 2026-05-08
 
 Closes the integration loop on v6: turns the bundles offer from prose into a structured artifact, adds the v6 hooks to the install path, and ships an end-to-end test that walks a spec from submission through replay to prove all 9 hooks compose without overriding each other.

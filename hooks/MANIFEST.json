@@ -75,6 +75,14 @@
       "description": "Advisory: at session end, flags v6 evidence/tasks/<id>/ folders with manifest.json but missing/empty commit_sha. Deduplicated across runs by hash of the failing-task set."
     },
     {
+      "name": "bootstrap_phase_0a.py",
+      "event": "SessionStart",
+      "bundle": "bootstrap",
+      "blocking": false,
+      "since_version": "v6.0.3",
+      "description": "Auto-installs the 9 phase_b + v6_replayability enforcement hooks into <project>/.claude/settings.json on the first conductor session. Wired ONCE in user-global ~/.claude/settings.json by install.sh (with consent). Conservative — only acts when there's clear evidence of a conductor session AND hooks aren't already wired. Never blocks."
+    },
+    {
       "name": "heartbeat.py",
       "event": "PostToolUse",
       "bundle": "monitoring",

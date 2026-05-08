@@ -1,17 +1,50 @@
-# project-conductor — Optional Hooks
+# project-conductor — Hooks
 
-Two opt-in hooks bundled with project-conductor v4. Both are PURELY LOCAL — no network calls, no secret reads. Install only if you want the behavior.
+This directory contains all hooks that ship with project-conductor. As of v6.0.3 they fall into **two install paths**:
 
-## What's here
+## (A) Auto-installed in Phase 0a — enforcement hooks (9 total)
 
-| File | Hook event | Purpose |
-|---|---|---|
-| `heartbeat.py` | PostToolUse | Updates `.conductor/heartbeat.json` so parent agents can read background-mode status without spawning a second conductor instance |
-| `usage_limit_wakeup.py` | PostToolUse | Detects API rate-limit / usage-limit errors, writes `.conductor/usage-limit-paused.json` with a recommended wakeup time, and prints a systemMessage so the conductor can pick it up and call `ScheduleWakeup` |
+The conductor automatically wires these into `<project>/.claude/settings.json` on the first session in a project, before Phase 0 begins. They convert the conductor's prompt-only rules into deterministic runtime enforcement. No prompt; no opt-in. The user signed up for them by invoking the conductor.
 
-## Why opt-in
+**`bundle: phase_b`** (6 hooks, since v3–v5):
 
-The conductor's design (since v3) is cautious about modifying `.claude/settings.json`. Hooks run shell commands automatically on every tool event — even harmless ones (logging, monitoring, status updates) deserve explicit user consent before being installed. So these hooks are **off by default**; you opt in by copying the snippets below.
+| File | Event | Blocking? | Purpose |
+|---|---|---|---|
+| `pre_phase0_readonly.py` | PreToolUse | yes | Phase 0 strict read-only |
+| `pre_first_response_gate.py` | PreToolUse | yes | First Response hard gate (overrides accept-edits) |
+| `pre_busy_wait_block.py` | PreToolUse | yes | Forbids busy-wait Bash patterns |
+| `pre_lock_enforcement.py` | PreToolUse | yes | Files-write declaration enforcement |
+| `post_output_quality.py` | PostToolUse | no | Structured-output completeness check |
+| `stop_validate_final_report.py` | Stop | no | FINAL_REPORT.md section validator |
+
+**`bundle: v6_replayability`** (3 hooks, since v6):
+
+| File | Event | Blocking? | Purpose |
+|---|---|---|---|
+| `pre_state_committed.py` | PreToolUse | no | Advisory if `.conductor/` is gitignored |
+| `pre_spec_split_enforce.py` | PreToolUse | yes | Blocks Read of large unsplit specs |
+| `stop_evidence_completeness_check.py` | Stop | no | Flags tasks with no recorded commit_sha |
+
+The canonical list lives in `hooks/MANIFEST.json` and is generated into settings.json by `lib/hooks_manifest.py::render_settings_block(["phase_b", "v6_replayability"], hook_dir=...)`. See `project-conductor.md` § Phase 0a for the install procedure.
+
+### Removing the auto-installed enforcement hooks
+
+If you want to disable enforcement (not recommended — these hooks catch known agent failure modes), edit `<project>/.claude/settings.json` and remove the relevant entries from `hooks.PreToolUse`, `hooks.PostToolUse`, and `hooks.Stop`. Permissions in `permissions.allow` can stay (no-ops without the hook commands). The agent will not re-install them on subsequent sessions because `.conductor/state.json` exists by then (Phase 0a is first-session-only).
+
+## (B) Opt-in via Optional Bundles Offer — monitoring / recovery (2 hooks)
+
+These have privacy or runtime characteristics that warrant explicit consent. They're offered in the conductor's First Response and installed only after the user replies `install 1,2,3` (or any subset).
+
+| File | Event | Bundle | Purpose |
+|---|---|---|---|
+| `heartbeat.py` | PostToolUse | `monitoring` | Updates `.conductor/heartbeat.json` so parent agents can read background-mode status without spawning a second conductor instance |
+| `usage_limit_wakeup.py` | PostToolUse | `recovery` | Detects API rate-limit / usage-limit errors, writes `.conductor/usage-limit-paused.json` with a recommended wakeup time, and prints a systemMessage so the conductor can pick it up and call `ScheduleWakeup` |
+
+The third bundle in the offer is **`agent-monitor/`** (a separate directory), which logs every tool call's bash command + agent prompt snippet — review the README in that directory before installing.
+
+## Why opt-in for the monitoring/recovery bundle
+
+`heartbeat.py` and `usage_limit_wakeup.py` write `.conductor/heartbeat.json` and `.conductor/usage-limit-paused.json` continuously throughout a session, and `agent-monitor/` records command/prompt content. They're harmless (no network, no secrets) but they ARE observation tools. Explicit consent is preserved for them.
 
 ## Security & privacy notes
 

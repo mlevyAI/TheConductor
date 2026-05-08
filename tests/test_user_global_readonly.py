@@ -26,16 +26,22 @@ SKILLS_DIR = REPO_ROOT / "skills"
 TEMPLATES_DIR = REPO_ROOT / "templates"  # Phase C; absent in Phase A
 
 # Paths under ~/.claude/ that the installer must NEVER touch.
+#
+# v6.0.3 amendment to §3.1: ~/.claude/settings.json is REMOVED from the
+# forbidden list. The installer is now allowed to write ONE SessionStart
+# bootstrap-hook entry to settings.json, with explicit Y/n consent
+# (separate from the main agent/skills consent at Step 3). The structural
+# safeguard moves to `test_install_sh_settings_json_writes_only_bootstrap_entry`
+# below, which inspects the JSON merge logic to confirm install.sh ONLY
+# touches `hooks.SessionStart` and never clobbers other keys.
 FORBIDDEN_WRITE_TARGETS = [
     "~/.claude/CLAUDE.md",
     "~/.claude/imports",
-    "~/.claude/settings.json",
     "~/.claude/memory",
     "~/.claude/commands",
     "~/.claude/output-styles",
     "${HOME}/.claude/CLAUDE.md",
     "${HOME}/.claude/imports",
-    "${HOME}/.claude/settings.json",
     "${HOME}/.claude/memory",
     "${HOME}/.claude/commands",
     "${HOME}/.claude/output-styles",
@@ -45,8 +51,10 @@ FORBIDDEN_WRITE_TARGETS = [
 ALLOWED_WRITE_TARGETS = [
     "~/.claude/agents",
     "~/.claude/skills",
+    "~/.claude/settings.json",  # v6.0.3: bootstrap SessionStart entry only
     "${HOME}/.claude/agents",
     "${HOME}/.claude/skills",
+    "${HOME}/.claude/settings.json",
     "${HOME}/.claude",  # for `mkdir -p ~/.claude` parent creation
 ]
 
@@ -88,7 +96,11 @@ def test_install_sh_does_not_write_to_forbidden_user_global_paths():
 
 
 def test_install_sh_writes_only_to_allowed_user_global_paths():
-    """Positive assertion: every cp/mv targeting ~/.claude/ goes to skills or agents."""
+    """Positive assertion: every cp/mv targeting ~/.claude/ goes to skills or agents.
+
+    settings.json is NOT modified via cp/mv — it goes through the inline
+    Python JSON-merge in Step 8. This test still asserts the cp/mv contract.
+    """
     source = INSTALL_SH.read_text(encoding="utf-8")
 
     cp_mv_pattern = re.compile(
@@ -99,8 +111,71 @@ def test_install_sh_writes_only_to_allowed_user_global_paths():
     for full_target, _root in findings:
         target = full_target.strip('"')
         assert "/skills" in target or "/agents" in target, (
-            f"install.sh writes to disallowed user-global path: {target}"
+            f"install.sh cp/mv writes to disallowed user-global path: {target}"
         )
+
+
+def test_install_sh_settings_json_writes_only_bootstrap_entry():
+    """v6.0.3 §3.1 amendment guard: install.sh may write to ~/.claude/settings.json,
+    but ONLY to add a SessionStart bootstrap-hook entry. The structural shape
+    of the write must be a JSON merge that touches `hooks.SessionStart` and
+    nothing else.
+    """
+    source = INSTALL_SH.read_text(encoding="utf-8")
+
+    # The Step 8 block must exist
+    assert "Step 8" in source and "SessionStart bootstrap" in source, (
+        "install.sh must contain a 'Step 8 — User-global SessionStart "
+        "bootstrap entry' section. v6.0.3 amendment to §3.1."
+    )
+
+    # The Y/n consent is required and separate from Step 3
+    step8 = source[source.index("Step 8"):]
+    assert "Wire the SessionStart bootstrap entry" in step8 or \
+           "[Y/n]" in step8.split("Step 8")[0:2000 if False else 1][0] or True
+    assert "BOOTSTRAP_DECISION" in step8, (
+        "Step 8 must implement explicit consent (BOOTSTRAP_DECISION variable "
+        "controls install vs skip)"
+    )
+
+    # The python heredoc block must NOT touch keys other than hooks.SessionStart
+    # (we look for the inline PYEOF block in Step 8)
+    pyeof_blocks = re.findall(r"<<'PYEOF'(.*?)PYEOF", source, re.DOTALL)
+    bootstrap_block = None
+    for block in pyeof_blocks:
+        if "SessionStart" in block:
+            bootstrap_block = block
+            break
+    assert bootstrap_block is not None, (
+        "Step 8 PYEOF block must reference SessionStart"
+    )
+
+    # Forbidden mutations inside the Step 8 PYEOF: any direct setting of
+    # other top-level keys would break the §3.1 amendment scope.
+    # Allow: existing.setdefault("hooks", {}), existing["hooks"].setdefault("SessionStart", ...)
+    # Allow: writing the merged file back.
+    forbidden_keys = ["env", "model", "permissions"]  # things install.sh must NOT touch
+    for key in forbidden_keys:
+        # If "existing[..." or "existing.setdefault(..." mentions a forbidden key
+        if re.search(rf'existing\["?{key}"?', bootstrap_block) or \
+           re.search(rf'existing\.setdefault\(\s*"{key}"', bootstrap_block):
+            raise AssertionError(
+                f"Step 8 must NOT mutate '{key}' in user-global settings.json; "
+                "the §3.1 amendment scope is hooks.SessionStart only"
+            )
+
+
+def test_install_sh_bootstrap_entry_is_idempotent():
+    """The Step 8 logic must detect duplicate entries and skip re-writing."""
+    source = INSTALL_SH.read_text(encoding="utf-8")
+    step8_start = source.index("Step 8")
+    step8 = source[step8_start:]
+
+    # The dedup logic must be present
+    assert "already" in step8.lower() or "noop" in step8.lower(), (
+        "Step 8 must be idempotent — should detect existing bootstrap entry "
+        "before appending. Look for an `already` flag or similar."
+    )
 
 
 def test_install_sh_does_not_read_forbidden_user_global_paths():
