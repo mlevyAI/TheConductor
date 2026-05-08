@@ -32,7 +32,7 @@ You are the Project Conductor. Self-contained. Tool-agnostic. Learning-capable. 
 
 ## Version summary (full detail in CHANGELOG.md)
 
-- **v6** (2026-05-08) — "Every task is replayable." Per-task evidence folder (`.conductor/evidence/tasks/<task-id>/` via `lib/evidence.py`). Spec coverage matrix (`lib/coverage.py` + `.conductor/coverage.md`). Structured decision IDs with task-evidence linkage (`lib/decisions.py`). Live surgical debug map (`lib/debug_map.py` + `.conductor/debug-map.md`, updated per feature, no longer post-flight only). Advisory hook `pre_state_committed.py` warns once if `.conductor/` is gitignored.
+- **v6** (2026-05-08) — "Every task is replayable." Per-task evidence folder (`.conductor/evidence/tasks/<task-id>/` via `lib/evidence.py`). Spec coverage matrix (`lib/coverage.py` + `.conductor/coverage.md`). Structured decision IDs with task-evidence linkage (`lib/decisions.py`). Live surgical debug map (`lib/debug_map.py` + `.conductor/debug-map.md`, updated per feature, no longer post-flight only). Advisory hook `pre_state_committed.py` warns once if `.conductor/` is gitignored. **`pre_spec_split_enforce.py` (BLOCKING)** prevents reading specs > 300 lines without first invoking `conductor-spec-splitter` — closes a measurable degradation path. **`stop_evidence_completeness_check.py` (advisory)** flags tasks with `manifest.json` but no recorded `commit_sha` at session end.
 - **v5-A** (2026-05-05) — Skills extraction. 7 skills under `~/.claude/skills/conductor-*/SKILL.md`. Body 1737 → ~440 lines. No behavior change vs v4.1.1.
 - **v5-D** (2026-05-05) — Dispatch envelope (`lib/dispatch_envelope.py::build_prompt()`), effort router, Opus literalism rules. `pre_lock_enforcement` fully active (Phase D populates `active-task.json::files_write[]`). Compact Instructions confirmed.
 - **v4.1** — Phase 0 strict read-only. First Response hard gate (closes the `accept-edits` walk-past failure). Lock check uses PID + session + heartbeat liveness.
@@ -239,6 +239,8 @@ wc -l < <spec-file>
 If line count > 300 → **invoke skill `conductor-spec-splitter`** first. The skill splits the spec into focused parts (≤250 lines each) plus a global-header, writes `.conductor/spec-parts/manifest.json`, and returns part file paths. Enrichment then runs once per part instead of on the full document.
 
 If line count ≤ 300 → skip the splitter and proceed directly to enrichment below.
+
+**Enforcement (v6).** This rule is now backed by `hooks/pre_spec_split_enforce.py` (PreToolUse on `Read`). Attempting to read a spec-shaped file > 300 lines without `.conductor/spec-parts/manifest.json` present will be blocked at the runtime layer. Override paths if absolutely necessary: paginate (`limit ≤ 500` is allowed), or `touch .conductor/.spec-split-skipped` to opt out (logged to `findings.md`). The hook does NOT trigger on `README.md`, `CHANGELOG.md`, `project-conductor.md`, `*.test.md`, or files under `.conductor/`, `.git/`, `node_modules/`.
 
 → **invoke skill `conductor-spec-enrichment`** (handles spec backup, audit, complexity scoring, enrichment annotations, diff generation, and the mandatory Phase-2 gate). When a manifest exists, run enrichment on each part file in sequence; merge results into a single `plan.md` and `routing.md`.
 

@@ -48,6 +48,9 @@ HOOK_NAMES = [
     "pre_lock_enforcement.py",
     "post_output_quality.py",
     "stop_validate_final_report.py",
+    "pre_state_committed.py",
+    "pre_spec_split_enforce.py",
+    "stop_evidence_completeness_check.py",
 ]
 
 

@@ -8,6 +8,32 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [6.0.1] — 2026-05-08
+
+Adds two hooks that close enforcement gaps left in v6.0.0. The "every task is replayable" promise was previously prompt-only — agents that skipped the splitter step or forgot to record commit SHAs created silent debt that only surfaced months later when a developer needed to debug. v6.0.1 makes both deterministic.
+
+### Added
+
+- **`hooks/pre_spec_split_enforce.py`** (PreToolUse, **BLOCKING**) — exits 2 when an agent attempts to `Read` a spec-shaped file > 300 lines without `.conductor/spec-parts/manifest.json` present. Closes a measurable Claude-degradation path: monolithic specs read in full bury the relevant section. Heuristic for "spec-shaped": filename matches `spec*.md`, `requirements*.md`, `prd*.md`, `*.spec.md`, OR path contains `/specs/` segment. Excluded: `README.md`, `CHANGELOG.md`, `project-conductor.md`, `*.test.md`, paths under `.conductor/`, `.git/`, `node_modules/`. Paginated reads (`limit ≤ 500`) explicitly allowed. Opt-out marker `.conductor/.spec-split-skipped` available.
+- **`hooks/stop_evidence_completeness_check.py`** (Stop, advisory) — at session end, scans `.conductor/evidence/tasks/*/manifest.json` and flags tasks with no `files.json` or null `commit_sha`. Appends a structured advisory to `findings.md`. Deduplicated across runs via `.conductor/.evidence-completeness-last-warned` (hash of failing-task set) — only re-warns when the gap set actually changes.
+- **39 new tests** — `tests/test_pre_spec_split_enforce.py` (26), `tests/test_stop_evidence_completeness_check.py` (13). Both new hooks added to the universal no-op-when-no-state-json guard in `tests/test_hooks_integration.py`.
+
+### Changed
+
+- **`project-conductor.md`** — Phase 1 large-spec section now documents the new enforcement and lists the override paths. Version summary updated.
+
+### Why Stop hook for evidence-completeness, not PostToolUse on `git commit`
+
+v6 convention is `evidence.record_files()` runs *after* the commit. A PostToolUse-on-commit check would always false-positive on the immediately-following PostToolUse event (the agent hasn't called `record_files` yet — it's the next tool call). Stop runs once per session, after all task work is complete — race-free.
+
+### Not changed
+
+- v6.0.0 lib API surface unchanged.
+- All existing v5/v4/v3 hooks unchanged.
+- Backwards-compatible: projects without v6 evidence folders simply produce zero gaps and the new Stop hook is a no-op.
+
+---
+
 ## [6.0.0] — 2026-05-08
 
 Theme: **"Every task is replayable."** Turns `.conductor/` from a session log into a time-travelable evidence store. Every dispatched task produces a structured per-task evidence folder; every spec criterion is mapped to the task and commit that satisfied it; every routing decision gets a stable `D###` ID; the surgical debug map updates live as features complete instead of only at end-of-session. Designed so a developer can come back months later and replay any task surgically from git history alone.
