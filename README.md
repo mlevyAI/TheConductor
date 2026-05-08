@@ -4,20 +4,27 @@
 
 Project Conductor takes a spec file and runs your entire build — from environment discovery through final delivery — with minimal interruptions. It discovers what tools are actually available in your environment, routes tasks to the right subagents, enforces budgets, and produces a final report with a surgical debug map.
 
-## What's new in v5
+## What's new in v6
 
-v5 is the largest architectural shift since the conductor was created. The monolithic 1 700-line body has been broken into modular skills, the hook layer is now fully wired, the AI Director scaffold is production-ready, and routing/effort decisions are driven by a complexity score rather than hardcoded logic.
+v6 makes every conductor session **replayable, evidence-backed, and bulletproof at install time.** The body now records per-task evidence as it runs, the install path auto-wires the enforcement hooks, and a SessionStart bootstrap closes the chicken-and-egg gap that previously let the conductor walk past its own gates.
 
 | Change | What it fixes |
 |---|---|
-| **Modular skills** (6 new conductor skills) | Kept the body under 450 lines; phase-specific logic lives in discoverable, independently-invocable skills |
-| **Complexity scoring → routing** | Model selection (Haiku / Sonnet / Opus) and retry budget are derived from a score, not from ad-hoc conditionals |
-| **Dispatch envelope** | Every outbound agent call goes through a typed envelope — literalism rules, effort, model, and pre-dispatch research are applied in one place |
-| **Effort router** | Resolves spec hints + score override + explicit flag into a single effort level; avoids over-spending Opus on simple tasks |
-| **6 new PreToolUse / Stop hooks** | Busy-wait blocking, lock enforcement, Phase 0 read-only guard, first-response gate, output-quality check, final-report validation — all active by default after install |
-| **AI Director scaffold** | `install.sh --for-project` writes a full project CLAUDE.md + rules + PRD template into a new repo in one command |
-| **Conductor state reader** | `lib/conductor_state.py` — typed access to `.conductor/` state; migration-safe from v4 |
-| **Template renderer** | `lib/template_render.py` — path-safety enforced; resolves `{{VARIABLES}}` from a dict; refuses writes outside the target directory |
+| **Per-task evidence + coverage matrix + live debug map** (v6.0.0) | Builds proof as the run happens. `lib/evidence.py` records artifacts per task; `lib/coverage.py` tracks acceptance criteria → evidence; `lib/debug_map.py` keeps the post-mortem map current during execution, not just at the end. |
+| **Block large unsplit specs + advisory on incomplete evidence** (v6.0.1) | A Stop hook flags any task that finishes without recorded evidence; a PreToolUse hook blocks `Read` on specs over the size threshold until `conductor-spec-splitter` has run. |
+| **Hooks manifest + bundles install + e2e integration test** (v6.0.2) | `hooks/MANIFEST.json` is the single source of truth for every hook (event, bundle, blocking, version). `lib/hooks_manifest.py` renders the `settings.json` block from the manifest. `tests/test_v6_e2e_integration.py` walks a spec from submission to replay and proves all 9 hooks compose without conflicts. |
+| **Bulletproof enforcement via SessionStart bootstrap + §3.1 amendment** (v6.0.3) | `hooks/bootstrap_phase_0a.py` is wired once into user-global `~/.claude/settings.json` (with explicit Y/n consent at `install.sh` Step 8). It detects conductor sessions on startup and auto-installs the 9 per-project enforcement hooks — so the conductor's own gates are active *before* it gets a chance to skip them. §3.1 amended to permit this single SessionStart entry; runtime read-only contract unchanged. |
+| **9 modular skills, body under 450 lines** (refactor) | Promoted the 63-line First Response template into `conductor-first-response`; conductor body is back under the 450-line maintenance target. |
+
+### Earlier v5 highlights (still active)
+
+- **Complexity-scored routing** — model selection (Haiku / Sonnet / Opus) and retry budget derived from a score, not ad-hoc conditionals.
+- **Dispatch envelope** — every outbound agent call carries literalism rules, effort, model, and pre-dispatch research in one typed envelope.
+- **Effort router** — resolves spec hints + score override + explicit flag into a single effort level.
+- **6 Phase B PreToolUse / Stop hooks** — busy-wait blocking, lock enforcement, Phase 0 read-only guard, first-response gate, output-quality check, final-report validation.
+- **AI Director scaffold** — `install.sh --for-project` writes a full project CLAUDE.md + rules + PRD template into a new repo in one command.
+- **`lib/conductor_state.py`** — typed access to `.conductor/` state, migration-safe from v4.
+- **`lib/template_render.py`** — path-safety enforced; resolves `{{VARIABLES}}` from a dict; refuses writes outside the target directory.
 
 See [CHANGELOG.md](CHANGELOG.md) for the full history.
 
@@ -47,7 +54,7 @@ It will:
 
 ## Safety mechanisms
 
-Project Conductor v5 is hardened against autonomous-agent failure modes (mechanisms listed by version):
+Project Conductor v6 is hardened against autonomous-agent failure modes (mechanisms listed by version):
 
 **v3 mechanisms (still active):**
 
@@ -58,7 +65,7 @@ Project Conductor v5 is hardened against autonomous-agent failure modes (mechani
 | **Lock enforcement** (via `git diff`) | Parallel tasks overwriting each other's files |
 | **Permissions sanity test** | Settings that look active but silently don't apply |
 
-**v4 mechanisms (NEW):**
+**v4 mechanisms (still active):**
 
 | Mechanism | What it prevents |
 |-----------|-----------------|
@@ -73,7 +80,7 @@ Project Conductor v5 is hardened against autonomous-agent failure modes (mechani
 | **Turn checkpoint** (informational, non-blocking) | Was mandatory pause in v3; demoted to notification in v4 — opt into `--strict-mode` for v3 behavior |
 | **Heartbeat for Background Mode** | Parent agents losing visibility into backgrounded conductor instances |
 
-**v5 mechanisms (NEW):**
+**v5 mechanisms (still active):**
 
 | Mechanism | What it prevents |
 |-----------|-----------------|
@@ -81,7 +88,19 @@ Project Conductor v5 is hardened against autonomous-agent failure modes (mechani
 | **First Response hard gate** | Conductor walking past the Permissions / Bundles offers and starting to build before the user replies `proceed` (the `accept-edits`-mode failure mode) |
 | **Complexity-scored routing** | Over-spending Opus on trivial tasks; under-provisioning Haiku tasks that silently need more model capability |
 | **Dispatch envelope + literalism rules** | Subagents ignoring spec requirements or adding unrequested features — envelope enforces caller intent on every dispatch |
-| **6 hook backstops** | Busy-wait loops, phantom locks, Phase 0 writes, premature starts, empty-column output, and invalid final reports — each caught and blocked by a dedicated hook |
+| **6 Phase B hook backstops** | Busy-wait loops, phantom locks, Phase 0 writes, premature starts, empty-column output, and invalid final reports — each caught and blocked by a dedicated hook |
+
+**v6 mechanisms (NEW):**
+
+| Mechanism | What it prevents |
+|-----------|-----------------|
+| **Per-task evidence record** | Tasks marked complete with no recorded artifact — evidence is registered as the task runs, not asserted at the end |
+| **Coverage matrix** | Acceptance criteria silently dropped — every criterion is mapped to evidence; Stop hook fires on uncovered criteria |
+| **Live debug map** | Post-mortem maps that drift from reality — the map is updated during execution, not retrofitted from memory |
+| **Spec-split-enforce hook** | Reading a 5 000-line spec into context as one chunk — `Read` on oversized specs is blocked until `conductor-spec-splitter` has run |
+| **Stop evidence-completeness check** | Final report claiming success while individual tasks have no evidence rows — Stop hook scans coverage matrix before allowing the final report |
+| **Phase 0a SessionStart bootstrap** | Chicken-and-egg: hooks not yet installed when the conductor first runs, so prompt-only rules went unenforced. Bootstrap detects conductor sessions on Claude Code startup and auto-wires the 9 per-project enforcement hooks before Phase 0 begins. |
+| **Hooks manifest as single source of truth** | Drift between `settings.json`, the prompt, and the actual hook files. `hooks/MANIFEST.json` is rendered into both at install time; `lib.hooks_manifest.validate_against_disk()` catches divergence. |
 
 ## Installation
 
@@ -95,6 +114,8 @@ The installer:
 - Detects the repository's path on this machine (so the agent can find its `hooks/` and `agent-monitor/` bundles when it offers to install them)
 - Patches an in-memory copy of `project-conductor.md`, replacing every `/path/to/TheConductor` placeholder with the real path
 - Copies the patched file to `~/.claude/agents/project-conductor.md`
+- Copies the conductor skills (`conductor-*/SKILL.md`) into `~/.claude/skills/`
+- Asks (separate Y/n at Step 8) whether to wire the **SessionStart bootstrap entry** into `~/.claude/settings.json`. This is the only user-global write — it adds one entry pointing at `hooks/bootstrap_phase_0a.py`, which auto-installs the 9 per-project enforcement hooks the first time the conductor runs in a new project. Decline if you'd rather wire the per-project hooks yourself; documented removal path lives in `hooks/README.md`.
 - Never modifies the in-repo source
 
 You can clone to any path you like — the command above clones into the current directory, but `~/TheConductor`, `~/Code/TheConductor`, `/opt/TheConductor` etc. all work. The installer figures it out from where the script lives.
