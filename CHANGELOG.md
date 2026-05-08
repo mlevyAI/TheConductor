@@ -8,6 +8,52 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [6.0.2] — 2026-05-08
+
+Closes the integration loop on v6: turns the bundles offer from prose into a structured artifact, adds the v6 hooks to the install path, and ships an end-to-end test that walks a spec from submission through replay to prove all 9 hooks compose without overriding each other.
+
+### Added
+
+- **`hooks/MANIFEST.json`** — single source of truth for every conductor hook. Each entry carries `name`, `event` (PreToolUse/PostToolUse/Stop/SessionStart), `bundle` (`phase_b`/`v6_replayability`/`monitoring`/`recovery`), `blocking` (bool), `since_version`, and `description`. Adding a new hook is now: drop the file in `hooks/`, add the entry, ship — no other code changes.
+- **`lib/hooks_manifest.py`** — typed loader + settings generator. `load_manifest()` validates schema; `list_hooks(bundle=...)` filters; `render_settings_block(["phase_b", "v6_replayability"], hook_dir=...)` returns a dict ready to merge into `.claude/settings.json`; `render_permissions(...)` returns the `Bash(...)` allow strings; `validate_against_disk()` cross-checks the manifest against actual files in `hooks/`. Blocking hooks correctly omit `async`; advisory hooks set `async: true`. Output event order is deterministic.
+- **`tests/test_hooks_manifest.py`** (26 tests) — schema validation, bundle membership invariants ("phase_b has exactly 6 hooks", "v6_replayability has exactly 3", "blocking hooks are PreToolUse only"), `validate_against_disk` round-trip.
+- **`tests/test_v6_e2e_integration.py`** (5 tests) — end-to-end simulation of the v6 lifecycle: pre-`proceed` gate blocks mutations + spec read; `proceed` opens gate but spec-split-enforce still blocks the spec; splitter unblocks; coverage criteria registered (0/2 → 1/2 after first task completes); `pre_lock_enforcement` allows declared writes and blocks rogues; `record_files` + `decisions.append_decision` + `debug_map.upsert_feature` produce a coherent evidence trail; Stop hook is silent when complete, flags incomplete tasks correctly; replay reads back the original envelope verbatim.
+
+### Changed
+
+- **`project-conductor.md` "Optional Bundles Offer"** — adds bundle (5) "v6 replayability hooks" to the offer text. Install command updated to `install 1,2,3,4,5`. Install procedure now references `lib/hooks_manifest.render_settings_block()` instead of "build hook block + permission entries" prose. Version summary mentions the manifest + e2e test.
+
+### Why this matters
+
+v6.0.0 added the libs, v6.0.1 added the hooks, but the hooks weren't in the install offer text — meaning the conductor would describe v6 features at runtime without enabling the deterministic enforcement. v6.0.2 closes that loop. The e2e test is the proof: a developer can read `tests/test_v6_e2e_integration.py` top-to-bottom and see exactly what happens when a spec lands, including which hooks fire at which transitions and why none of them step on each other.
+
+### Hook precedence (documented, verified by e2e test)
+
+In normal Phase 2 execution with `state.gate == post_first_response_proceed`:
+
+| Tool call                            | Which hook owns it                            |
+|--------------------------------------|-----------------------------------------------|
+| `Read(small file)`                   | none (all no-op)                              |
+| `Read(spec.md, no manifest, full)`   | `pre_spec_split_enforce` BLOCKS               |
+| `Read(spec.md, paginated limit≤500)` | none (allow)                                  |
+| `Write(declared file)`               | none (`pre_lock_enforcement` allows)          |
+| `Write(undeclared file)`             | `pre_lock_enforcement` BLOCKS                 |
+| `Write(under ~/.claude/)`            | `pre_first_response_gate` / `pre_lock_enforcement` / `pre_phase0_readonly` all BLOCK (defense-in-depth) |
+| `Bash("until ...; do sleep")`        | `pre_busy_wait_block` BLOCKS                  |
+| `Bash(git commit)`                   | none (allow); evidence recording happens after |
+| Stop event                           | `stop_validate_final_report` + `stop_evidence_completeness_check` both run; both advisory |
+
+There is **one intentional precedence boundary** documented in the test: `pre_lock_enforcement` will block a `Write` to `.conductor/evidence/tasks/<id>/` if that path is not in the active task's `files_write[]`. This is by design — evidence is written via `lib.evidence.*` (Python imports), not via the `Write` tool. If you need to write evidence files via `Write`, add them explicitly to `files_write[]` in `active-task.json`.
+
+### Not changed
+
+- Existing v3/v4/v5 behavioral rules are unchanged.
+- v6.0.0 lib API (`lib/evidence.py`, `lib/coverage.py`, `lib/decisions.py`, `lib/debug_map.py`) unchanged.
+- v6.0.1 hooks unchanged.
+- `install.sh` flow for `~/.claude/agents/` and `~/.claude/skills/` unchanged. Only the runtime bundles offer is affected.
+
+---
+
 ## [6.0.1] — 2026-05-08
 
 Adds two hooks that close enforcement gaps left in v6.0.0. The "every task is replayable" promise was previously prompt-only — agents that skipped the splitter step or forgot to record commit SHAs created silent debt that only surfaced months later when a developer needed to debug. v6.0.1 makes both deterministic.

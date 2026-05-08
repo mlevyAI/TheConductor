@@ -1,0 +1,94 @@
+{
+  "schema_version": 1,
+  "_comment": "Single source of truth for all conductor hooks. lib/hooks_manifest.py reads this; tests/test_hooks_manifest.py asserts every entry has a matching script and every script in hooks/ is registered. Adding a new hook? Add its file AND its entry here in the same commit.",
+  "hooks": [
+    {
+      "name": "pre_phase0_readonly.py",
+      "event": "PreToolUse",
+      "bundle": "phase_b",
+      "blocking": true,
+      "since_version": "v5",
+      "description": "Phase 0 strict read-only enforcement. Blocks Write/Edit/mutating-Bash outside .conductor/ when state.gate is the Phase 0 scan."
+    },
+    {
+      "name": "pre_first_response_gate.py",
+      "event": "PreToolUse",
+      "bundle": "phase_b",
+      "blocking": true,
+      "since_version": "v4.1",
+      "description": "First Response hard gate. Blocks Write/Edit/Task/mutating-Bash before user replies 'proceed'. Overrides accept-edits mode."
+    },
+    {
+      "name": "pre_busy_wait_block.py",
+      "event": "PreToolUse",
+      "bundle": "phase_b",
+      "blocking": true,
+      "since_version": "v4",
+      "description": "Forbids busy-wait Bash (until/while-do-sleep, leading sleep N>=100). Use ScheduleWakeup or file-mtime polling instead."
+    },
+    {
+      "name": "pre_lock_enforcement.py",
+      "event": "PreToolUse",
+      "bundle": "phase_b",
+      "blocking": true,
+      "since_version": "v5",
+      "description": "Lock enforcement. Blocks Write/Edit to files outside the active task's declared files_write[]. Tolerant pre-Phase D (no enforcement until active-task.json::files_write is populated)."
+    },
+    {
+      "name": "post_output_quality.py",
+      "event": "PostToolUse",
+      "bundle": "phase_b",
+      "blocking": false,
+      "since_version": "v4",
+      "description": "Output-quality completeness check. Inspects structured outputs (CSV/JSON/XLSX/Parquet) and flags column-empty, row-empty, or low fill-rate to findings.md."
+    },
+    {
+      "name": "stop_validate_final_report.py",
+      "event": "Stop",
+      "bundle": "phase_b",
+      "blocking": false,
+      "since_version": "v3",
+      "description": "FINAL_REPORT validator. At session end with phase==complete, verifies FINAL_REPORT.md contains all required sections; flags missing sections to findings.md."
+    },
+    {
+      "name": "pre_state_committed.py",
+      "event": "PreToolUse",
+      "bundle": "v6_replayability",
+      "blocking": false,
+      "since_version": "v6",
+      "description": "Advisory: warns once per session if .conductor/ is in .gitignore — breaks v6 'every task is replayable' promise. Logs to findings.md, never blocks."
+    },
+    {
+      "name": "pre_spec_split_enforce.py",
+      "event": "PreToolUse",
+      "bundle": "v6_replayability",
+      "blocking": true,
+      "since_version": "v6",
+      "description": "Blocks Read of spec-shaped files >300 lines without spec-parts/manifest.json present. Closes a measurable Claude-degradation path. Paginated reads (limit<=500) and an opt-out marker (.conductor/.spec-split-skipped) are allowed."
+    },
+    {
+      "name": "stop_evidence_completeness_check.py",
+      "event": "Stop",
+      "bundle": "v6_replayability",
+      "blocking": false,
+      "since_version": "v6",
+      "description": "Advisory: at session end, flags v6 evidence/tasks/<id>/ folders with manifest.json but missing/empty commit_sha. Deduplicated across runs by hash of the failing-task set."
+    },
+    {
+      "name": "heartbeat.py",
+      "event": "PostToolUse",
+      "bundle": "monitoring",
+      "blocking": false,
+      "since_version": "v4",
+      "description": "Writes .conductor/heartbeat.json after every tool call so parent agents can read background-mode status without spawning a second conductor."
+    },
+    {
+      "name": "usage_limit_wakeup.py",
+      "event": "PostToolUse",
+      "bundle": "recovery",
+      "blocking": false,
+      "since_version": "v4",
+      "description": "Detects API usage-limit / rate-limit errors in tool output, writes .conductor/usage-limit-paused.json with a recommended ScheduleWakeup time."
+    }
+  ]
+}
