@@ -228,7 +228,7 @@ Three opt-in bundles ship with the conductor:
 
 | Bundle | What it does |
 |---|---|
-| `agent-monitor/` | After each session, generates a markdown report with auto-detected anti-patterns (probe sprawl, busy-wait loops, no-forward-progress clusters, repeat-bash, scope-shrink). Pre-fills the "Issues & Patterns to Improve" table. Includes opt-in share-footer with a GitHub issue URL template — you decide what (if anything) to share. |
+| `agent-monitor/` | After each session, generates a **local** markdown report with auto-detected anti-patterns (probe sprawl, busy-wait loops, no-forward-progress clusters, repeat-bash, scope-shrink). Pre-fills the "Issues & Patterns to Improve" table for your own after-action review. Reports stay on your machine; nothing is uploaded. The same report format is the planned input for a future local self-learning loop (SessionStart context injection from past sessions). |
 | `hooks/heartbeat.py` | Updates `.conductor/heartbeat.json` after every tool call so parent agents can read background-mode status without spawning a second conductor instance. |
 | `hooks/usage_limit_wakeup.py` | Detects API rate-limit / usage-limit errors, computes a recommended wakeup time, writes `.conductor/usage-limit-paused.json` so the conductor can `ScheduleWakeup` and resume after the limit resets. |
 

@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question / discussion
+    url: https://github.com/mlevyai/theconductor/discussions
+    about: For open-ended questions or design discussion. For concrete bugs or feature proposals, use the templates above.

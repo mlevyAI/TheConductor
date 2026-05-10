@@ -1,17 +1,23 @@
 # Agent Monitor
 
-Optional bundled monitoring for project-conductor (and Claude Code in general).
+Optional bundled monitoring for project-conductor (and Claude Code in general). **Purely local** — nothing leaves your machine.
 
 ## What it does
 
 - **Logs every tool call** the agent makes — Bash, Read, Write, Edit, Agent, Skill, WebSearch, etc. — to `activity.jsonl`.
 - **Generates a markdown report** at the end of each session with tool usage, files touched, agents spawned, and bash commands executed.
-- **Auto-detects anti-patterns** (NEW in v4): probe sprawl, busy-wait loops, no-forward-progress clusters, repeat-bash, scope-shrink signals. Findings appear in a pre-filled "Issues & Patterns to Improve" table at the top of the report.
-- **Includes an opt-in share-footer** with a GitHub issue URL template, so you can contribute interesting patterns back to the maintainers.
+- **Auto-detects anti-patterns**: probe sprawl, busy-wait loops, no-forward-progress clusters, repeat-bash, scope-shrink signals. Findings appear in a pre-filled "Issues & Patterns to Improve" table at the top of the report.
+
+## What it's for
+
+1. **Personal after-action review.** Spot your own session's anti-patterns — did the agent loop on probes, busy-wait, or read forever without writing anything? The report tells you in 30 seconds.
+2. **Foundation for future local self-learning.** The same `activity.jsonl` and `report_*.md` files are the planned input for a SessionStart hook that injects past-pattern context for the agent to avoid repeating its own mistakes. Today the data is collected but not yet consumed; the format is stable.
+
+It is **not** a contribution channel. If you spot a structural problem with project-conductor itself, open an issue or PR — see the repo's [CONTRIBUTING.md](../CONTRIBUTING.md). Don't paste raw reports into issues; they're noisy and tend to leak absolute paths.
 
 ## Privacy
 
-**All data stays local.** Nothing is sent anywhere. The reporter writes to your local disk only. The share-footer is just a URL template — you decide whether to click it, what to paste, and what to redact first.
+**All data stays local.** Nothing is sent anywhere. The logger writes to your local disk only.
 
 > ⚠️ **Add the log paths to your project's `.gitignore` after copying.** `logger.py` writes `activity.jsonl` and `reporter.py` writes `reports/` next to the script. Once you copy `agent-monitor/` into your own project, those files live inside *your* repo tree — and they capture bash commands (which may include tokens or secrets pasted on the command line), agent prompts, and file paths. If you `git add .` and push, that data becomes public on your remote. Add this to your project's `.gitignore` immediately after the copy in step 1:
 >
@@ -84,7 +90,6 @@ After each Claude Code session ends (Stop hook fires), you'll see in the UI:
 Open the markdown file to see:
 - **Issues & Patterns to Improve** — auto-detected anti-patterns, with observations + impact + suggested fix
 - **Per-session breakdown** — tool counts, bash commands, files touched, agents spawned
-- **Share footer** — opt-in URL template if you want to file a useful report upstream
 
 ## What it auto-detects
 
@@ -98,15 +103,9 @@ Open the markdown file to see:
 
 Detection thresholds are configurable in `reporter.py` — search for the constants near the top.
 
-## Contributing back
+## Suggesting new detectors
 
-The auto-detection patterns above are derived from real-world test sessions. If you spot a NEW failure mode the detector misses, please:
-
-1. Note the pattern (when it triggered, what the agent was doing, what impact it had)
-2. Open an issue on the project-conductor repo using the share-footer URL in your report
-3. If you can express the pattern as a regex or counter, propose a PR that adds a detector
-
-The most valuable monitor reports are the ones that catch behavior the maintainers haven't seen yet.
+If you notice a failure mode the auto-detector misses (e.g. "subagent thrash — same `subagent_type` dispatched 5+ times with near-identical prompts"), open an issue or PR against project-conductor describing the pattern and, if you can, propose a regex or counter. See [CONTRIBUTING.md](../CONTRIBUTING.md). Don't paste full reports — describe the pattern and the smallest snippet that demonstrates it.
 
 ## Uninstall
 

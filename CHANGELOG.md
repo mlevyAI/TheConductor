@@ -8,6 +8,52 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [6.0.4] — 2026-05-10
+
+Reframes the contribution model and the role of `agent-monitor/`. No behavior change to the conductor itself; this release is documentation + one code removal in `agent-monitor/reporter.py`.
+
+**Why.** The previous "share your monitor reports" contribution path put a high redaction burden on contributors (every Bash cwd, every Read path) and asked them to do something no comparable OSS project (VS Code, React, Next.js, Kubernetes, Rails, Vite, Astro) asks for: paste raw runtime telemetry into public issues. The structured 5-field template helped, but most users would still bounce on the redaction step or skip the form. The valuable signal — narrative description of a failure mode — was already covered by the existing PR-description format. So we drop the share-footer flow entirely and re-anchor contribution on the standard issue/PR pattern that mainstream OSS uses.
+
+`agent-monitor/` itself stays. Its job is now scoped clearly: **personal after-action review today, foundation for future local self-learning tomorrow.** The `activity.jsonl` and `report_*.md` formats are unchanged so a future SessionStart hook can read past reports and inject anti-pattern context for the agent to avoid repeating its own mistakes — without anything ever leaving the user's machine.
+
+### Removed
+
+- **`agent-monitor/reporter.py` `share_footer()` function and its call site in `generate_report()`.** Reports no longer end with a GitHub issue URL template, the 5-field contribution form, or the redaction checklist. Reports are now purely local artifacts.
+- **`CONTRIBUTING.md` "Sharing your monitor reports" section** (the v4.0.1 5-field template description, the "What makes a useful monitor report contribution" list, and the redaction checklist). The contribution path is now the standard issue + PR flow.
+
+### Added
+
+- **`.github/ISSUE_TEMPLATE/bug_report.md`** — standard bug-report template modeled on the conventions used by Next.js, Vite, and similar repos: what you ran, what happened vs. expected, a *small* minimal reproduction (with explicit guidance not to paste full agent-monitor reports or `activity.jsonl` dumps), environment, optional hypothesis.
+- **`.github/ISSUE_TEMPLATE/feature_request.md`** — feature / new-detector template with a dedicated "If proposing a new agent-monitor detector" section that asks for the pattern as a counter or regex.
+- **`.github/ISSUE_TEMPLATE/config.yml`** — disables blank issues, points open-ended questions to Discussions.
+- **`CONTRIBUTING.md` "A note on agent-monitor reports"** — explicit statement that the bundle is a local debugging tool, reports are not for upstream, and contributors should quote small excerpts (not raw dumps) when describing a failure.
+
+### Changed
+
+- **`agent-monitor/README.md`** — opening reframed: "Purely local — nothing leaves your machine." New "What it's for" section names the two uses (personal after-action review; foundation for future local self-learning). The "Contributing back" section is replaced with "Suggesting new detectors" pointing to `CONTRIBUTING.md`. The "Output" section no longer mentions a share footer.
+- **`agent-monitor/reporter.py` module docstring** — removed v4 historical framing; now states the report format is the foundation for a future local self-learning loop (SessionStart context injection from past reports).
+- **`README.md` Optional bundles table** — `agent-monitor/` row no longer mentions an opt-in share-footer or GitHub issue URL template. Now describes the bundle as a local after-action artifact and signals the future self-learning use of the same format.
+- **`CONTRIBUTING.md`** — streamlined. New "How to file an issue" section points at the templates and explicitly tells contributors to quote small excerpts rather than paste full reports. PR description format unchanged in spirit but tightened ("smallest excerpt" wording for evidence).
+
+### Unchanged
+
+- `agent-monitor/logger.py` — unchanged. The on-disk data format (`activity.jsonl`) is preserved so a future self-learning loop can consume it.
+- `agent-monitor/example-settings.json` — unchanged. The hook wiring (SessionStart / PreToolUse / PostToolUse / Stop) is the same.
+- `install.sh` — unchanged. The bundle install path (offered in conductor's First Response, walked through with sanity-test) is unaffected.
+- `project-conductor.md` — Optional Bundles Offer wording unchanged. The bundle is still offered as `(1) agent-monitor/`.
+- All 9 enforcement hooks under `hooks/` — unchanged.
+
+### Migration
+
+None required. If you previously had `agent-monitor/` installed, your existing reports keep working — only newly-generated reports from this version onward will lack the share footer. No settings.json or permissions change is needed. `activity.jsonl` format is unchanged.
+
+### Notes
+
+- **No data was ever uploaded by `agent-monitor/`** — the share-footer was a URL template only. Privacy posture is unchanged in practice; this release just removes a flow that wasn't being used productively and was setting users up to leak paths if they followed it without careful redaction.
+- **Future self-learning:** the natural next step is a SessionStart hook that reads the last N reports from `.claude/agent-monitor/reports/` and injects "your last 3 sessions tripped probe sprawl — avoid throwaway research files this run" into the agent's context. Today's report format is exactly the right input for that. Out of scope for this release.
+
+---
+
 ## [6.0.3] — 2026-05-08
 
 Four changes that close the operational loop on v6 — and one architectural amendment to §3.1 to make Layer 4 enforcement actually work:
