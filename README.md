@@ -136,23 +136,54 @@ Use project-conductor to build from spec.md
 
 That's it. The conductor handles the rest.
 
-### Status check (anytime during execution)
+## In-session features
 
-```
-status
-```
+The conductor is mostly autonomous, but it pauses at known gates for you to confirm direction. These are the things you can type during a session — and the few things you should know about that the conductor enforces automatically.
 
-### Mid-run controls
+### Gates the conductor waits at (you must reply)
 
-| Command | Effect |
-|---------|--------|
-| `status` | Show current phase, task, budget |
-| `show progress` | Phase-level summary |
-| `proceed` | Continue after a checkpoint |
-| `permissions yes` | Accept permissions offer |
-| `approve enrichments` | Approve spec additions (required before Phase 2) |
-| `install bundles N,M from /path/to/TheConductor` | Install one or more optional bundles (1=monitor, 2=heartbeat, 3=usage-limit) — see Optional bundles offer in first response. After running `install.sh`, the path is already baked into the agent — the offer prompt shows the real path on this machine, not a placeholder. (NEW in v4.0.2) |
-| `skip bundles` | Decline the optional bundles offer (NEW in v4.0.2) |
+| You type | When | What it does |
+|---|---|---|
+| `proceed` | After the First Response (Environment Scan Complete) | Unblocks Phase 1+. Until you reply, the conductor cannot Write/Edit anywhere outside `.conductor/`. |
+| `approve enrichments` | After Phase 1 enrichment review | Unblocks Phase 2 dispatch. Phase 2 will not start without this exact phrase. |
+| `revise <item>` / `remove <item>` / `show details <item>` | During enrichment review | Iterate on the enrichment diff before approving. |
+| `permissions yes A` / `yes B` / `yes C` / `custom` / `no` | At the Permissions Offer | Choose where auto-allow rules go: `.claude/settings.json` (A), `settings.local.json` (B), merged with existing (C), see-the-JSON-first (custom), or per-command prompts (no). |
+| `install 1,2,3 from /path/to/TheConductor` (or any subset) / `skip bundles` | At the Optional Bundles Offer | Install the monitoring/recovery bundles (1 = agent-monitor, 2 = heartbeat, 3 = usage-limit-wakeup) or decline. Mid-run install is also supported with the same syntax. |
+| `key added` / `skip` | When Phase 2 pauses on a missing credential | `key added` after you've populated `.env.local`; `skip` defers the credential to a later phase. |
+
+### Status & visibility (anytime, doesn't interrupt work)
+
+| You type | What it does |
+|---|---|
+| `status` | Reads `.conductor/status.md` + `.conductor/progress.md`, replies with a human-readable summary. Does **not** trigger a self-check. |
+| `show progress` | Same as `status`. |
+
+### Budget-overflow controls (offered automatically at ~95%)
+
+When the conductor detects it's near the token budget it offers three replies. Until you answer, it continues to a safe checkpoint and autosaves; after 25 silent turns it auto-continues.
+
+| You type | What it does |
+|---|---|
+| `continue` | Keep going past 95%. The conductor delivers partial output and never auto-shrinks scope. |
+| `pause` | Pause after the current task finishes. State persists in `.conductor/` so you can resume any time. |
+| `wrap-up` | Deliver whatever's done as a partial result and produce `FINAL_REPORT.md`. |
+
+### Auto-enforced boundaries (no command needed — be aware these exist)
+
+| Boundary | What it blocks | How to override |
+|---|---|---|
+| **Phase 0 is read-only** | All `Write`/`Edit` and tree-mutating `Bash` until you reply `proceed`. Discovery only. | Reply `proceed` after reviewing the First Response. |
+| **Phase 1 enrichment gate** | Phase 2 dispatch until `approve enrichments`. | Reply `approve enrichments` (or iterate first with `revise` / `remove`). |
+| **Large-spec auto-split** | Reading any spec-shaped file > 300 lines without `.conductor/spec-parts/manifest.json`. | Paginate with `limit ≤ 500`, or `touch .conductor/.spec-split-skipped` to opt out. |
+| **Investigation budget** | After 3 throwaway research artifacts in one task, the conductor must commit to a draft. Hard cap of 5 exploration artifacts per task. | None — the rule prevents probe-sprawl loops. Probes go to `.conductor/probes/`. |
+
+### After-the-fact: the debug map
+
+Every completed run writes a **surgical debug map** to `FINAL_REPORT.md` (and a live one under `.conductor/debug-map.md`). When you hit a bug later, quote it back to a fresh Claude session:
+
+> "Bug in [feature]. Per debug map: phase [P.T], files [list], commit [SHA]. Fix surgically without touching unrelated code."
+
+This is the single highest-leverage feature for follow-up work — it lets a new agent fix something without re-reading the whole project.
 
 ## Configuration
 
@@ -206,7 +237,9 @@ All conductor state lives in `<project>/.conductor/`:
 
 ## Session resumption
 
-If a session ends mid-build, just start a new one in the same project directory. The conductor reads `.conductor/` state, cleans stale locks, verifies file state matches its claims, and continues from where it left off.
+If a session ends mid-build, just start a new one in the same project directory. The conductor reads `.conductor/` state, cleans stale locks, verifies file state matches its claims, and continues from where it left off. Resume covers the **work itself**: what's been decided (`decisions.md`), what's been built (`evidence/phase-N/`), what's planned next (`plan.md`), current phase + gate (`state.json`).
+
+Resume is distinct from the optional cross-session **self-learning** layer (`agent-monitor/`, v6.1.0+). Self-learning carries *behavioral* hints between sessions ("you tripped probe sprawl 3 of last 4 sessions"), not work state. Together: resume tells the agent *where* you left off; self-learning tells it *how* it tends to fail in this project. Each is useful; they don't replace each other.
 
 ## Final report
 
@@ -228,7 +261,7 @@ Three opt-in bundles ship with the conductor:
 
 | Bundle | What it does |
 |---|---|
-| `agent-monitor/` | After each session, generates a **local** markdown report with auto-detected anti-patterns (probe sprawl, busy-wait loops, no-forward-progress clusters, repeat-bash, scope-shrink). Pre-fills the "Issues & Patterns to Improve" table for your own after-action review. Reports stay on your machine; nothing is uploaded. The same report format is the planned input for a future local self-learning loop (SessionStart context injection from past sessions). |
+| `agent-monitor/` | After each session, generates a **local** markdown report with auto-detected anti-patterns (probe sprawl, busy-wait loops, no-forward-progress clusters, repeat-bash, scope-shrink). Pre-fills the "Issues & Patterns to Improve" table for your own after-action review. **Cross-session self-learning (v6.1.0+):** maintains a per-project `memory.json` and on every new session injects a short advisory like *"probe_sprawl: 3 of last 4 sessions — avoid throwaway research scripts"* so the agent enters new sessions aware of its own past tendencies. Purely local; reports + memory stay on your machine; nothing is uploaded. |
 | `hooks/heartbeat.py` | Updates `.conductor/heartbeat.json` after every tool call so parent agents can read background-mode status without spawning a second conductor instance. |
 | `hooks/usage_limit_wakeup.py` | Detects API rate-limit / usage-limit errors, computes a recommended wakeup time, writes `.conductor/usage-limit-paused.json` so the conductor can `ScheduleWakeup` and resume after the limit resets. |
 

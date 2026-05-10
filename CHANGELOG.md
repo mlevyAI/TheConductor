@@ -8,6 +8,63 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [6.1.0] — 2026-05-10
+
+Adds **cross-session self-learning** to the optional `agent-monitor/` bundle. Per-project, purely local, opt-in via the bundle install (no new consent step). Complements — does not replace — the existing `.conductor/` resume layer.
+
+**Why.** The conductor already remembers *the work* across sessions (`state.json`, `decisions.md`, `evidence/`, `plan.md`). It does not remember *its own behavioral mistakes*. Result: an agent that tripped probe sprawl in three sessions on the same project would, on session four, have no signal that it has a tendency to do so. v6.1.0 closes that gap with a tiny cross-session memory + a SessionStart advisory.
+
+**What this is NOT:**
+- Not a resume feature (resume is `.conductor/state.json` etc., already shipping).
+- Not learning your codebase or domain — it tracks 5 *meta-behavior* anti-patterns only.
+- Not cross-project — each project has its own `memory.json`. A pattern in project A never bleeds into project B.
+- Not telemetry — nothing is uploaded; `memory.json` contains pattern_ids + counts + timestamps only (no paths, commands, prompts, or project names).
+
+### Added
+
+- **`agent-monitor/selflearn.py`** — new SessionStart hook (~150 lines). Reads `memory.json`, computes the top-N recurring anti-patterns, formats a short advisory, emits it as `hookSpecificOutput.additionalContext` per the Claude Code SessionStart hook protocol, and writes `last_injection.md` so the next reporter run can show what was applied. Hard-capped at top 5 patterns / ~300 tokens (1200 chars). Always exits 0; failures log to `hook-errors.log`. Honors `selflearn.disabled` flag file (touch to disable injection without losing memory).
+- **`agent-monitor/reporter.py` cross-session memory** — new functions `load_memory()`, `update_memory()`, `read_last_injection()`, `format_injection_section()`. Schema versioned (`schema_version: 1`); incompatible schemas archive to `memory.json.vN.bak` and start fresh rather than auto-migrating. Atomic writes (tempfile + os.replace).
+- **`agent-monitor/reporter.py` "Self-learning context applied this session" section** — when the previous SessionStart injected advisory context, the next per-session report shows the exact text near the top, so the user can audit why the agent was steered toward/away from a pattern.
+- **Pattern IDs on detector findings** — each finding from `detect_patterns()` now carries a stable `id` (`probe_sprawl`, `busy_wait`, `repeat_bash`, `no_forward_progress`, `scope_shrink`). Memory aggregates by these IDs. Display unchanged.
+- **`agent-monitor/example-settings.json`** — `SessionStart` array now wires both `logger.py` AND `selflearn.py` (logger continues to log every event; selflearn injects advisory context on cold/warm start).
+- **`tests/test_selflearn.py`** (19 tests) — covers cold start (no memory → no injection), single-pattern injection, ordering by hits, top-N cap, unknown-pattern-id skip, `.disabled` flag suppression, corrupted/wrong-schema/list-shaped memory recovery, atomic write, rolling window pruning across `update_memory` calls, and the reporter's `read_last_injection` consume-and-clear semantics.
+
+### Changed
+
+- **`agent-monitor/README.md`** — new "Cross-session memory (self-learning)" section describing the schema, window, cap, disable flag, and reset path. Output section gains the new "Self-learning context applied this session" item. Install instructions updated to reflect the second SessionStart entry and the third permission allow rule. Gitignore guidance adds `memory.json`, `last_injection.md`, `selflearn.disabled`, and `hook-errors.log` (so neither memory nor diagnostics leak via `git add .`).
+- **`README.md`** — Optional bundles row for `agent-monitor/` updated to describe the cross-session self-learning capability (replacing the previous "planned input for a future loop" text). New "In-session features" section (separate from this changelog entry) catalogs every user-facing trigger (`proceed`, `approve enrichments`, `permissions yes A/B/C`, `install 1,2,3 from /path`, `skip bundles`, `status`, `show progress`, `continue` / `pause` / `wrap-up`, `key added` / `skip`, plus the auto-enforced boundaries).
+- **`README.md` Session resumption** — adds a one-paragraph clarification distinguishing resume (work state, via `.conductor/`) from self-learning (behavioral memory, via `agent-monitor/`). They complement each other; neither replaces the other.
+
+### Unchanged
+
+- `agent-monitor/logger.py` — fully unchanged. The `activity.jsonl` format is unchanged so existing reports keep working.
+- `project-conductor.md` — unchanged. Self-learning is bundle-only, not part of the conductor's hard rules. The agent receives the advisory as context but is not bound by it (the prompt's hard stops still take precedence).
+- `install.sh` — unchanged. The bundle install path (offered in conductor's First Response) carries the new SessionStart wiring through `agent-monitor/example-settings.json` automatically.
+- All 9 enforcement hooks under `hooks/` — unchanged.
+
+### Tunables
+
+In `agent-monitor/selflearn.py`:
+- `MAX_PATTERNS = 5` — top-N patterns to surface in the injection.
+- `INJECTION_CHAR_BUDGET = 1200` — ~300 tokens.
+- `PATTERN_ADVICE` dict — one-line "avoid" message per pattern_id. Edit to tune wording.
+
+In `agent-monitor/reporter.py`:
+- `MEMORY_WINDOW_SIZE = 20` — rolling session window.
+- `MEMORY_SCHEMA_VERSION = 1` — bump if schema changes; old files archive automatically.
+
+### Migration
+
+None required. Existing `agent-monitor/` installs continue to work; the new SessionStart entry only takes effect after you copy the updated `example-settings.json` (or manually add the second SessionStart `command` entry). On first session after upgrading: no injection (cold-start memory). After ~2 sessions with detections: injections begin.
+
+### Notes
+
+- **Bug-fix vs feature classification.** This is a minor (`6.1.0`) because it adds a new agent-visible behavior (advisory context at SessionStart). The opt-in surface is unchanged — same bundle, same install path.
+- **What it does NOT do.** It does not modify the conductor's runtime rules, does not auto-tune detector thresholds, does not store any user-confirmed labels (false-positive marking), does not share state across projects, and does not let the agent write to `memory.json` directly. All four are deliberate scope cuts; user-label support is the most likely follow-up.
+- **The reporter's memory write is best-effort.** If `update_memory()` fails for any reason, the report is still saved and the activity log is still rotated. Corrupted memory recovery is silent: load returns empty memory, the next session's update writes a fresh file.
+
+---
+
 ## [6.0.4] — 2026-05-10
 
 Reframes the contribution model and the role of `agent-monitor/`. No behavior change to the conductor itself; this release is documentation + one code removal in `agent-monitor/reporter.py`.
