@@ -212,14 +212,15 @@ Phase 1 is the **mandatory enrichment review gate**: Phase 2 cannot start until 
 
 Execute through all phases continuously. Don't stop between phases unless a Hard Stop triggers.
 
+**Parallel tool-call hygiene (read-only batching).** Every step in this phase distinguishes *write-bearing work* (the `Task` dispatch itself, source-file edits) from *read-only work* (file reads, `git diff`/`git log`, `WebSearch`/`WebFetch`, typecheck/test runs, lock-file scans). Write-bearing work is serialized by the existing lock model — DO NOT change that. Read-only work that is independent (no command's output is required to formulate another command in the same step) MUST be issued in a single assistant turn as parallel tool calls. Sequential issuance of independent read-only commands burns turns with zero added safety. The bullets below mark each batch with a "📦 batch" annotation when parallel issuance applies; absence of the marker means the commands depend on each other and run sequentially.
+
 **Per-Resource Discovery (when ≥2 peer external resources are involved):** discover each resource independently before generalizing. A solution validated for resource A is a hypothesis for B, not a verdict. Smoke-test the simplest approach first; if it fails, identify the failure mode and choose a heavier solution; look for an API endpoint before scraping; check sitemap.xml/robots.txt; then choose. Document choice + reason in `decisions.md`.
 
 **Pre-flight per task:**
-- Update `status.md` with current task
-- Verify prerequisites + tool availability + acceptance criteria
-- If parallelizable: check for lock conflicts (read `.conductor/locks/`, compare resources)
-- If `TBD` routing: → **invoke skill `conductor-routing-rubric`** (Tier 2 deep-read, decide)
-- If `pre-dispatch research: required` (or optional with budget): run targeted WebSearch/WebFetch (cap 3 calls), write digest to `.conductor/evidence/<task-id>-research.md` (hard cap 2k tokens), inject as `## Research Context` in dispatch prompt
+- Update `status.md` with current task (write — runs alone before the read batch below)
+- 📦 batch (single turn, independent): verify prerequisites + tool availability + acceptance criteria; if parallelizable, scan `.conductor/locks/` for conflicts; if `TBD` routing, gather Tier 1 inventory rows from `environment.md`. These are all reads against disk state that does not change between them.
+- If `TBD` routing AND Tier 1 returns 2–3 candidates: → **invoke skill `conductor-routing-rubric`** (Tier 2 deep-read of those candidates fires as a 📦 batch — see the skill's §Procedure step 2).
+- If `pre-dispatch research: required` (or optional with budget): 📦 batch — issue all WebSearch/WebFetch calls (cap 3) in a single turn; the queries are independent by definition. Write the digest to `.conductor/evidence/<task-id>-research.md` (hard cap 2k tokens) and inject as `## Research Context` in dispatch prompt.
 
 **Dispatch via `Task` tool.** Wrap every task prompt with `lib/dispatch_envelope.py::build_prompt()` (XML envelope: `<task>`, `<constraints>`, `<files-write>`, `<acceptance>`, `<context>`, `<effort-recommendation>`, `<complexity>`, `Reminder:` — or split 9-element form when prompt > 4% of sub-agent context window). Apply `apply_literalism_rules()` to the task text before passing it. Write `files_write` to `active-task.json::files_write[]` before dispatch (enables `pre_lock_enforcement`). Include explicit `model:` parameter when downgrade desired.
 
@@ -230,12 +231,14 @@ Execute through all phases continuously. Don't stop between phases unless a Hard
 **Receive completion report:** task name, status (complete/partial/failed/blocked), files, commit, tests, acceptance results, findings.
 
 **Lock enforcement check (after every dispatch):**
-- `git diff --name-only HEAD~1 HEAD` (and unstaged): files written
-- Compare against the task's declared `files_write`
+- 📦 batch (single turn, independent reads): `git diff --name-only HEAD~1 HEAD`, `git diff --name-only` (unstaged), `git log -1 --format=%H` — all read-only against the same git state.
+- Compare returned file lists against the task's declared `files_write`
 - Files match exactly OR subset → log "lock honored" to `progress.md`, continue
 - Files outside declared set → log to `deviations.md`; trigger self-check; for parallel tasks, pause remaining dispatch and surface to user (CRITICAL — another parallel task may have read mid-write); for sequential, log and elevate next task's verification to "thorough"
 
-**Reality verification (DO NOT SKIP).** Code: read changed files, check git log, run build/typecheck/test. UI (if tools available): screenshots, a11y, console errors. DB: migration ran cleanly, schema matches, rollback exists. API: endpoint responds, errors handled, no breaking changes.
+**Reality verification (DO NOT SKIP).** Issue the verification commands as a 📦 batch — single assistant turn, parallel tool calls — because they are independent reads against the post-dispatch state. Do NOT serialize `git diff` → `git log` → `pnpm typecheck` → `pnpm test` → `cat <changed-file>`; those four commands and any number of file reads are mutually independent. Categories: Code — read changed files + check git log + run build/typecheck/test (📦 batch). UI (if tools available) — screenshots + a11y check + console-error scan (📦 batch). DB — migration log read + schema query + rollback existence check (📦 batch). API — endpoint health probe + error-path probe + breaking-change diff against prior schema (📦 batch). The first command whose output mandates a different next step (e.g., test failure changes whether to read test logs vs. proceed) ends the batch; subsequent commands respond to that signal sequentially.
+
+**Pipelined verification + next-task pre-flight (sequential mode only).** When the next task N+1 is sequential (not parallel-spawned) AND its declared `files_write` does not overlap any file written by task N AND N+1 is not the first task of a new phase, you MAY issue task N's Reality-verification 📦 batch and task N+1's read-only pre-flight 📦 batch in the same assistant turn. Constraints: (a) if any of N's verification commands fail, you MUST halt before processing N+1's pre-flight results — do not advance to dispatch on a failed N; (b) do NOT pipeline when N+1 will be parallel-spawned with peers (lock conflict resolution requires N's verification to be final first); (c) do NOT pipeline across phase boundaries (a phase boundary is itself a checkpoint). When pipelining, log the overlap to `progress.md` as `pipeline N→N+1` so the post-mortem can confirm the optimization fired.
 
 **Output-quality completeness check.** → **invoke skill `conductor-output-quality`** after producing any structured output (CSV, JSON, XLSX, Parquet, DB write). Do NOT mark task complete until anomalies are addressed.
 

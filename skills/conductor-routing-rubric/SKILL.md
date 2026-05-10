@@ -35,7 +35,7 @@ The conductor invokes this skill once per task dispatch, after Phase 1 enrichmen
 
 2. **Determine candidate count:**
    - **1 clear match** → use it. No deep read needed.
-   - **2–3 candidates** → deep-read full body of those candidates ONLY (NOT the entire library). Track against the adaptive cap.
+   - **2–3 candidates** → deep-read full body of those candidates ONLY (NOT the entire library). 📦 batch: issue all 2–3 `Read` calls in a single assistant turn — the candidate files are independent and their order does not change the routing decision. Track against the adaptive cap (each file in the batch counts as one deep-read).
    - **0 matches** → use `general-purpose`. Log the gap to `.conductor/routing.md`.
 
 3. **Resolve the model** (score-derived from Phase 1.3.5):
