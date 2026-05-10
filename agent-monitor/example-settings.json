@@ -1,5 +1,5 @@
 {
-  "_comment": "Example hooks block for agent-monitor. Copy the 'hooks' section into your project's .claude/settings.json (or settings.local.json for personal/gitignored). Adjust the absolute paths to match where you copied agent-monitor/ — typically <your-project>/.claude/agent-monitor/.",
+  "_comment": "Example hooks block for agent-monitor. Copy the 'hooks' section into your project's .claude/settings.json (or settings.local.json for personal/gitignored). Adjust the absolute paths to match where you copied agent-monitor/ — typically <your-project>/.claude/agent-monitor/. The selflearn.py SessionStart entry is the Layer 2 cross-session memory: it reads memory.json (written by reporter.py) and injects a short advisory about anti-patterns from prior sessions. To disable injection without losing data: touch <absolute-path-to>/agent-monitor/selflearn.disabled.",
   "hooks": {
     "SessionStart": [
       {
@@ -8,6 +8,10 @@
             "type": "command",
             "command": "python3 \"<absolute-path-to>/agent-monitor/logger.py\"",
             "async": true
+          },
+          {
+            "type": "command",
+            "command": "python3 \"<absolute-path-to>/agent-monitor/selflearn.py\""
           }
         ]
       }

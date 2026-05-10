@@ -1,23 +1,34 @@
 # Agent Monitor
 
-Optional bundled monitoring for project-conductor (and Claude Code in general).
+Optional bundled monitoring for project-conductor (and Claude Code in general). **Purely local** — nothing leaves your machine.
 
 ## What it does
 
 - **Logs every tool call** the agent makes — Bash, Read, Write, Edit, Agent, Skill, WebSearch, etc. — to `activity.jsonl`.
 - **Generates a markdown report** at the end of each session with tool usage, files touched, agents spawned, and bash commands executed.
-- **Auto-detects anti-patterns** (NEW in v4): probe sprawl, busy-wait loops, no-forward-progress clusters, repeat-bash, scope-shrink signals. Findings appear in a pre-filled "Issues & Patterns to Improve" table at the top of the report.
-- **Includes an opt-in share-footer** with a GitHub issue URL template, so you can contribute interesting patterns back to the maintainers.
+- **Auto-detects anti-patterns**: probe sprawl, busy-wait loops, no-forward-progress clusters, repeat-bash, scope-shrink signals. Findings appear in a pre-filled "Issues & Patterns to Improve" table at the top of the report.
+- **Cross-session self-learning** (v6.1.0+, opt-in via the same bundle). The reporter records a small `memory.json` summarizing which anti-patterns recurred across sessions in this project. At the start of every new session, `selflearn.py` reads it and injects a short advisory like *"probe_sprawl: 3 of last 4 sessions — don't write more than 2 throwaway research scripts before committing to a draft"* so the agent enters the new session aware of its own past tendencies. Purely local, capped at 5 patterns / ~300 tokens.
+
+## What it's for
+
+1. **Personal after-action review.** Spot your own session's anti-patterns — did the agent loop on probes, busy-wait, or read forever without writing anything? The report tells you in 30 seconds.
+2. **Cross-session self-learning** (per-project). The agent gets reminded of meta-mistakes it made in this project's prior sessions so it doesn't repeat them. Note: this is *behavioral* memory only — it doesn't learn your codebase or domain. For "where did I leave off" continuity, the conductor's existing `.conductor/state.json` + `decisions.md` resume layer already handles that.
+
+It is **not** a contribution channel. If you spot a structural problem with project-conductor itself, open an issue or PR — see the repo's [CONTRIBUTING.md](../CONTRIBUTING.md). Don't paste raw reports into issues; they're noisy and tend to leak absolute paths.
 
 ## Privacy
 
-**All data stays local.** Nothing is sent anywhere. The reporter writes to your local disk only. The share-footer is just a URL template — you decide whether to click it, what to paste, and what to redact first.
+**All data stays local.** Nothing is sent anywhere. The logger writes to your local disk only.
 
 > ⚠️ **Add the log paths to your project's `.gitignore` after copying.** `logger.py` writes `activity.jsonl` and `reporter.py` writes `reports/` next to the script. Once you copy `agent-monitor/` into your own project, those files live inside *your* repo tree — and they capture bash commands (which may include tokens or secrets pasted on the command line), agent prompts, and file paths. If you `git add .` and push, that data becomes public on your remote. Add this to your project's `.gitignore` immediately after the copy in step 1:
 >
 > ```
 > .claude/agent-monitor/activity.jsonl
 > .claude/agent-monitor/reports/
+> .claude/agent-monitor/memory.json
+> .claude/agent-monitor/last_injection.md
+> .claude/agent-monitor/selflearn.disabled
+> .claude/agent-monitor/hook-errors.log
 > ```
 
 ## Install (3 steps)
@@ -33,6 +44,7 @@ After this you should have:
 /path/to/your/project/.claude/agent-monitor/
   ├── logger.py
   ├── reporter.py
+  ├── selflearn.py          # SessionStart self-learning hook (v6.1.0+)
   ├── README.md
   └── example-settings.json
 ```
@@ -60,7 +72,7 @@ Open `example-settings.json` for reference. Copy its `hooks` block into your pro
 }
 ```
 
-(Same path for `PreToolUse`, `PostToolUse`. Use `reporter.py` for `Stop`.)
+(Same path for `PreToolUse`, `PostToolUse`. Use `reporter.py` for `Stop`. The `SessionStart` array now contains **two** entries: `logger.py` AND `selflearn.py`. The `selflearn.py` entry is what makes cross-session memory work — without it, sessions still log + report normally but the agent gets no past-pattern context on start.)
 
 ### 3. Allow the hook commands in your permissions
 
@@ -68,7 +80,8 @@ Add to your `.claude/settings.json` `permissions.allow`:
 
 ```json
 "Bash(python3 \"/home/me/myproject/.claude/agent-monitor/logger.py\")",
-"Bash(python3 \"/home/me/myproject/.claude/agent-monitor/reporter.py\")"
+"Bash(python3 \"/home/me/myproject/.claude/agent-monitor/reporter.py\")",
+"Bash(python3 \"/home/me/myproject/.claude/agent-monitor/selflearn.py\")"
 ```
 
 This avoids permission prompts on every tool call.
@@ -82,9 +95,46 @@ After each Claude Code session ends (Stop hook fires), you'll see in the UI:
 ```
 
 Open the markdown file to see:
+- **Self-learning context applied this session** (v6.1.0+) — exactly what advisory was injected at SessionStart, so you can audit why the agent was steered toward/away from a pattern
 - **Issues & Patterns to Improve** — auto-detected anti-patterns, with observations + impact + suggested fix
 - **Per-session breakdown** — tool counts, bash commands, files touched, agents spawned
-- **Share footer** — opt-in URL template if you want to file a useful report upstream
+
+## Cross-session memory (self-learning)
+
+When the bundle is wired up, `reporter.py` updates `memory.json` after every session, and `selflearn.py` reads it at the start of the next one to inject a short advisory.
+
+**What's stored** (in `memory.json`, schema v1):
+```json
+{
+  "schema_version": 1,
+  "sessions_observed": 7,
+  "window_size": 20,
+  "session_history": [{"ts": "...", "patterns": ["probe_sprawl"]}, ...],
+  "patterns": {
+    "probe_sprawl": {"hits": 4, "first_seen": "...", "last_seen": "..."}
+  }
+}
+```
+
+Pattern IDs only — no paths, no commands, no prompts, no project names. Even if `memory.json` leaked, it would reveal "probe sprawl happens often in this project" and nothing more.
+
+**Window:** rolling last 20 sessions. If you fix a pattern and stop tripping it, after ~20 clean sessions it ages out of memory automatically.
+
+**Cap:** the SessionStart hook injects at most the **top 5 patterns** by hit-count, capped at ~300 tokens total.
+
+**Disable without losing data:**
+```bash
+touch .claude/agent-monitor/selflearn.disabled
+```
+Memory keeps accumulating; the agent just stops being told about it. Remove the file to re-enable.
+
+**Reset memory:**
+```bash
+rm .claude/agent-monitor/memory.json
+```
+Next session is a cold start.
+
+**Per-project, never cross-project.** A pattern hit in project A never bleeds into project B. Each project has its own `memory.json`.
 
 ## What it auto-detects
 
@@ -98,16 +148,10 @@ Open the markdown file to see:
 
 Detection thresholds are configurable in `reporter.py` — search for the constants near the top.
 
-## Contributing back
+## Suggesting new detectors
 
-The auto-detection patterns above are derived from real-world test sessions. If you spot a NEW failure mode the detector misses, please:
-
-1. Note the pattern (when it triggered, what the agent was doing, what impact it had)
-2. Open an issue on the project-conductor repo using the share-footer URL in your report
-3. If you can express the pattern as a regex or counter, propose a PR that adds a detector
-
-The most valuable monitor reports are the ones that catch behavior the maintainers haven't seen yet.
+If you notice a failure mode the auto-detector misses (e.g. "subagent thrash — same `subagent_type` dispatched 5+ times with near-identical prompts"), open an issue or PR against project-conductor describing the pattern and, if you can, propose a regex or counter. See [CONTRIBUTING.md](../CONTRIBUTING.md). Don't paste full reports — describe the pattern and the smallest snippet that demonstrates it.
 
 ## Uninstall
 
-Remove the `hooks` block from your settings file, delete the `agent-monitor/` directory, and remove the two `Bash(python3 ...)` permissions. No other cleanup needed.
+Remove the `hooks` block from your settings file, delete the `agent-monitor/` directory, and remove the three `Bash(python3 ...)` permissions (`logger.py`, `reporter.py`, `selflearn.py`). No other cleanup needed.

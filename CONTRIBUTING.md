@@ -9,51 +9,28 @@ The most valuable contributions are:
 - **Environment compatibility** — gaps where the conductor assumed something about Claude Code that didn't hold in your version/config
 - **Routing improvements** — cases where tasks were routed to the wrong subagent and how you fixed it
 - **New hard stop conditions** — situations that should have been a hard stop but weren't
-- **New anti-pattern detectors** for `agent-monitor/reporter.py` — if you spot a behavior the auto-detection misses (NEW in v4)
+- **New anti-pattern detectors** for `agent-monitor/reporter.py` — if you spot a behavior the auto-detection misses, propose a regex or counter
 
 Less valuable: cosmetic changes, speculative features, or additions that increase complexity without addressing a real failure mode.
 
-## Sharing your monitor reports (UPDATED in v4.0.1)
+## How to file an issue
 
-If you've installed the optional `agent-monitor/` bundle, every Claude Code session ends with a markdown report at `.claude/agent-monitor/reports/report_<ts>.md`. The bottom of each report includes an opt-in share-footer with:
+Use the issue templates in `.github/ISSUE_TEMPLATE/`. The bug-report template asks for:
 
-- A GitHub issue URL template
-- **A 5-field contribution template** that takes ~2 minutes to fill in
+- **What you ran** — the spec, the command, the conductor version
+- **What happened** vs. **what you expected**
+- **Minimal reproduction** — the smallest excerpt that demonstrates the failure (a single phase output, a `status.md` snippet, the prompt that mis-routed). Do **not** paste full session reports or `activity.jsonl` dumps; they're noisy and tend to leak absolute paths.
+- **Environment** — OS, Claude Code version, conductor version
 
-**Why the template matters:** the auto-detector flags patterns based on hardcoded heuristics (probe sprawl ≥3 files, busy-wait ≥2 occurrences, etc.). It cannot judge whether a flagged pattern was bad-in-context — that requires knowing what the user was trying to do and whether the agent succeeded. The template captures that context so maintainers can act on the report.
+If you have an `agent-monitor/` report that captured the failure, quote only the relevant rows from the "Issues & Patterns to Improve" table. Redact paths first.
 
-**The 5 fields the template asks for:**
-
-1. **What you were trying to do** (1-2 sentences)
-2. **Did the agent succeed?** (yes / partially / no, with brief explanation)
-3. **Which flagged patterns were bad-in-context vs neutral vs false-positive** (one line each)
-4. **What should the agent have done instead?** (optional but high-value)
-5. **Anything the auto-detector missed** (optional)
-
-Then paste the raw report below the template (after redacting paths/secrets).
-
-**What makes a useful monitor report contribution:**
-
-1. **A pattern the auto-detector caught and you confirm was bad** (with goal context — "I was trying to X, the agent did Y instead, the detector caught it"). This validates existing detector thresholds.
-2. **A pattern the auto-detector MISSED that you noticed manually.** Example: "Agent kept dispatching the same subagent with slightly-different prompts — 5 times in a row before I intervened. Detector didn't catch this. Suggesting a new detector: 'subagent-thrash' = ≥3 Agent dispatches with same `subagent_type` and >70% prompt similarity."
-3. **A false-positive** — the detector flagged something that wasn't actually a problem in your context. Helps tune thresholds.
-4. **A regression vs prior conductor version.** Example: "v4 added per-resource discovery, but in my session it triggered on a single-resource task and added overhead. Suggest: skip per-resource discovery rule when only 1 external resource detected."
-
-**Before pasting, redact:**
-- Absolute file paths (`/Users/.../`, `/home/.../`, project-identifying directory names)
-- Environment-specific URLs (internal hostnames, API endpoints with credentials)
-- Any tokens, keys, or passwords accidentally captured in bash output
-- Drop project-identifying names if confidential
-
-The share-footer is opt-in. The maintainers don't see your reports unless you choose to share them. **No automatic telemetry exists.**
-
-## How to contribute
+## How to open a pull request
 
 1. **Fork the repo** and create a branch from `main`
-2. **Make your change** in `project-conductor.md`
+2. **Make your change** in `project-conductor.md`, the relevant skill, or a hook
 3. **Test it** — run the conductor on at least one real project with your change
 4. **Describe the failure mode** your change addresses (or the gap it fills) in the PR description
-5. **Reference evidence** — paste the status.md output or final report section that demonstrates the problem
+5. **Reference evidence** — quote the smallest excerpt from `.conductor/status.md` or `FINAL_REPORT.md` that demonstrates the problem and the fix
 
 ## PR description format
 
@@ -64,7 +41,7 @@ The share-footer is opt-in. The maintainers don't see your reports unless you ch
 
 ## Evidence
 
-[Paste from .conductor/status.md, FINAL_REPORT.md, or a run transcript]
+[Smallest excerpt from .conductor/status.md, FINAL_REPORT.md, or a run transcript that shows the problem and/or the fix]
 
 ## How it's tested
 
@@ -85,7 +62,12 @@ Project Conductor uses [Semantic Versioning](https://semver.org/):
 - Hardcoded tool assumptions — the conductor must adapt to what's available
 - Line-level implementation detail in status/progress files — those are operator outputs, not documentation
 - Speculative features without a real failure mode behind them
+- Raw `agent-monitor/` reports or `activity.jsonl` dumps. Quote the smallest excerpt that demonstrates the issue instead.
+
+## A note on agent-monitor reports
+
+The `agent-monitor/` bundle is a **local** debugging tool. Its reports stay on your machine. There is no upload, no telemetry, and no expectation that you share them. If a report helps you describe a failure mode, quote a short excerpt in your issue or PR — but the report itself is for you, not for upstream.
 
 ## Questions
 
-Open an issue. Describe the run that produced the unexpected behavior and attach the `.conductor/` directory contents if possible.
+Open an issue. Describe the run that produced the unexpected behavior and quote the smallest piece of `.conductor/` state that demonstrates it.

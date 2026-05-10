@@ -5,14 +5,16 @@ Called by the Stop hook. Reads activity.jsonl, generates a markdown report
 with auto-detected anti-pattern observations, and outputs a systemMessage
 JSON so Claude Code shows the report path in the UI.
 
-NEW IN v4: auto-pattern detection. The reporter analyzes each session for
-known anti-patterns (probe sprawl, busy-wait, no-forward-progress, repeat-bash,
-scope-shrink signals) and pre-fills the "Issues & Patterns to Improve" table.
-Empty table only if zero detections.
+Auto-pattern detection: the reporter analyzes each session for known
+anti-patterns (probe sprawl, busy-wait, no-forward-progress, repeat-bash,
+scope-shrink signals) and pre-fills the "Issues & Patterns to Improve"
+table. Empty table only if zero detections.
 
-Privacy: all data stays local. The share-footer is opt-in — it provides a
-URL template for users who choose to file an issue, with explicit
-"redact paths and secrets first" guidance.
+Privacy: all data stays local. Reports are written to disk on the user's
+machine and are never uploaded anywhere. The report format is also the
+foundation for a future local self-learning loop (a SessionStart hook
+that reads recent reports and injects past-pattern context for the agent
+to avoid repeating its own mistakes).
 """
 
 import json
@@ -26,6 +28,11 @@ LOG_DIR = os.path.dirname(os.path.abspath(__file__))
 LOG_FILE = os.path.join(LOG_DIR, "activity.jsonl")
 HOOK_ERRORS_FILE = os.path.join(LOG_DIR, "hook-errors.log")
 REPORTS_DIR = os.path.join(LOG_DIR, "reports")
+MEMORY_FILE = os.path.join(LOG_DIR, "memory.json")
+LAST_INJECTION_FILE = os.path.join(LOG_DIR, "last_injection.md")
+
+MEMORY_SCHEMA_VERSION = 1
+MEMORY_WINDOW_SIZE = 20  # rolling window of last N sessions kept in memory.json
 
 # Configuration — adjust these thresholds if your workload differs
 PROBE_FILE_PATTERNS = (
@@ -149,6 +156,7 @@ def detect_patterns(session):
     probes_never_edited = [p for p in probe_writes if p not in edit_files]
     if len(probes_never_edited) >= PROBE_SPRAWL_THRESHOLD:
         findings.append({
+            "id": "probe_sprawl",
             "observation": f"Probe sprawl detected — {len(probes_never_edited)} throwaway research files written without later edits ({', '.join(os.path.basename(p) for p in probes_never_edited[:5])}{'...' if len(probes_never_edited) > 5 else ''})",
             "impact": "Agent spent budget on research instead of committing to a draft implementation. Likely indicates 'research mode' loop.",
             "suggested_fix": "Apply v4 Investigation Budget rule: after 3 throwaway artifacts, MUST commit to a draft implementation. Iterate against real failures, not in the abstract.",
@@ -159,6 +167,7 @@ def detect_patterns(session):
     busy_waits = [c for c in bash_cmds if BUSY_WAIT_PATTERN.search(c)]
     if len(busy_waits) >= BUSY_WAIT_THRESHOLD:
         findings.append({
+            "id": "busy_wait",
             "observation": f"Busy-wait loops detected — {len(busy_waits)} bash commands using `until ...; do sleep N; done` or similar",
             "impact": "Agent burned turns/tokens blocking on conditions that could have been polled with ScheduleWakeup or file-mtime checks. Zero forward progress during waits.",
             "suggested_fix": "v4 Forbidden Bash Patterns rule bans busy-wait loops. Use ScheduleWakeup for time-based polling, mtime checks for event-based polling, or a heartbeat file for backgrounded tasks.",
@@ -176,6 +185,7 @@ def detect_patterns(session):
     max_cluster = max(max_cluster, cluster_size)
     if max_cluster >= NO_PROGRESS_CLUSTER_SIZE:
         findings.append({
+            "id": "no_forward_progress",
             "observation": f"No-forward-progress cluster — {max_cluster} consecutive tool calls without any Write/Edit",
             "impact": "Agent was reading/researching/diagnosing without producing output. Could indicate stuck-in-discovery, status-polling loop, or analysis paralysis.",
             "suggested_fix": "Force a draft commit after N read-only operations. If genuinely diagnosing, capture findings to a file (which IS a Write) so progress is observable.",
@@ -189,6 +199,7 @@ def detect_patterns(session):
         top_cmd, top_count = max(repeats, key=lambda x: x[1])
         preview = top_cmd[:120].replace("\n", " ")
         findings.append({
+            "id": "repeat_bash",
             "observation": f"Repeat-bash detected — `{preview}...` ran {top_count} times" + (f" (and {len(repeats)-1} other repeated command(s))" if len(repeats) > 1 else ""),
             "impact": "Identical commands run repeatedly often indicate a stuck-check loop or polling that should be event-driven.",
             "suggested_fix": "Pause when you notice yourself running the same command 3+ times. Ask: am I stuck? Is there a different angle? If polling state, switch to ScheduleWakeup or file-mtime check.",
@@ -207,6 +218,7 @@ def detect_patterns(session):
                 break
     if shrink_hits:
         findings.append({
+            "id": "scope_shrink",
             "observation": f"Scope-shrink signals detected — {len(shrink_hits)} agent dispatches using language like {sorted(set(kw for kw, _ in shrink_hits))}",
             "impact": "Agent likely auto-shrunk scope to fit perceived time/budget pressure rather than delivering partial output and continuing.",
             "suggested_fix": "v4 anti-shrinkage clause: deliver partial output (rolling save / partial Excel / partial DB write) and CONTINUE. The user gets more value from 200 partial than 55 complete.",
@@ -243,6 +255,135 @@ def format_findings_table(findings):
     lines.append("")
     return lines
 
+
+# ---------------------------------------------------------------------------
+# Cross-session memory (Layer 2 self-learning) — see agent-monitor/README.md
+# ---------------------------------------------------------------------------
+
+def _atomic_write_json(path: str, data: dict) -> None:
+    """Write JSON via tempfile + os.replace so a half-written file never appears."""
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+    os.replace(tmp, path)
+
+
+def _empty_memory() -> dict:
+    return {
+        "schema_version": MEMORY_SCHEMA_VERSION,
+        "updated": datetime.datetime.now().isoformat(timespec="seconds"),
+        "sessions_observed": 0,
+        "window_size": MEMORY_WINDOW_SIZE,
+        "session_history": [],
+        "patterns": {},
+    }
+
+
+def load_memory() -> dict:
+    """Read memory.json. Falls back to empty memory on missing/corrupt/version-mismatch."""
+    if not os.path.exists(MEMORY_FILE):
+        return _empty_memory()
+    try:
+        with open(MEMORY_FILE, encoding="utf-8") as f:
+            data = json.load(f)
+        if not isinstance(data, dict):
+            return _empty_memory()
+        if data.get("schema_version") != MEMORY_SCHEMA_VERSION:
+            # Archive incompatible memory and start fresh.
+            try:
+                os.replace(MEMORY_FILE, MEMORY_FILE + f".v{data.get('schema_version', 'unknown')}.bak")
+            except OSError:
+                pass
+            return _empty_memory()
+        # Defensive defaults
+        data.setdefault("session_history", [])
+        data.setdefault("patterns", {})
+        data.setdefault("window_size", MEMORY_WINDOW_SIZE)
+        data.setdefault("sessions_observed", len(data["session_history"]))
+        return data
+    except (OSError, json.JSONDecodeError):
+        return _empty_memory()
+
+
+def update_memory(findings_by_session: list, ts: str) -> dict:
+    """Append the latest sessions to memory.json, recompute pattern counts
+    over the rolling window, and write atomically.
+
+    `findings_by_session` is a list-of-lists: one inner list of pattern_ids
+    per session in the just-finished report (usually 1; the reporter
+    aggregates everything it sees in activity.jsonl).
+
+    Returns the new memory dict.
+    """
+    mem = load_memory()
+    for pattern_ids in findings_by_session:
+        mem["session_history"].append({
+            "ts": ts,
+            "patterns": sorted(set(pattern_ids)),
+        })
+
+    # Roll the window
+    if len(mem["session_history"]) > mem["window_size"]:
+        mem["session_history"] = mem["session_history"][-mem["window_size"]:]
+
+    # Recompute the per-pattern aggregates from the windowed history.
+    # Storing them is redundant with session_history but makes the SessionStart
+    # hook fast (one read, no aggregation).
+    new_patterns: dict = {}
+    for entry in mem["session_history"]:
+        for pid in entry.get("patterns", []):
+            p = new_patterns.setdefault(pid, {
+                "hits": 0,
+                "first_seen": entry["ts"],
+                "last_seen": entry["ts"],
+            })
+            p["hits"] += 1
+            if entry["ts"] < p["first_seen"]:
+                p["first_seen"] = entry["ts"]
+            if entry["ts"] > p["last_seen"]:
+                p["last_seen"] = entry["ts"]
+    mem["patterns"] = new_patterns
+    mem["sessions_observed"] = len(mem["session_history"])
+    mem["updated"] = datetime.datetime.now().isoformat(timespec="seconds")
+    _atomic_write_json(MEMORY_FILE, mem)
+    return mem
+
+
+def read_last_injection() -> str:
+    """Read the SessionStart self-learning injection (if any) so the per-session
+    report can show what context was applied. Cleared after reading."""
+    if not os.path.exists(LAST_INJECTION_FILE):
+        return ""
+    try:
+        with open(LAST_INJECTION_FILE, encoding="utf-8") as f:
+            content = f.read().strip()
+    except OSError:
+        return ""
+    # Clear it so the next session starts clean.
+    try:
+        os.remove(LAST_INJECTION_FILE)
+    except OSError:
+        pass
+    return content
+
+
+def format_injection_section(injection_text: str) -> list:
+    if not injection_text:
+        return []
+    return [
+        "## Self-learning context applied this session",
+        "_The following advisory context was injected at SessionStart based on patterns from prior sessions in this project:_",
+        "",
+        "```",
+        injection_text,
+        "```",
+        "",
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Per-session formatting
+# ---------------------------------------------------------------------------
 
 def format_session(session: list, idx: int) -> str:
     lines = []
@@ -330,66 +471,6 @@ def format_session(session: list, idx: int) -> str:
     return "\n".join(lines)
 
 
-def share_footer():
-    """Opt-in share footer (v4.0.1: structured contribution template).
-
-    Maintainers cannot judge whether an auto-detected pattern was bad-in-context
-    without knowing what the user was trying to do. So the footer prompts the
-    user to fill 5 short fields BEFORE pasting the raw report — shifting
-    contributions from 'tool-call dumps' to 'structured incident reports'
-    that are actually actionable.
-    """
-    return [
-        "---",
-        "## 📤 Share this report with project-conductor maintainers",
-        "",
-        "Found a useful pattern, a regression, or a new failure mode worth documenting?",
-        "**Copy the template below, fill the 5 fields, then open an issue:**",
-        "",
-        "```",
-        "https://github.com/<your-fork>/project-conductor/issues/new?title=Agent+session+report",
-        "```",
-        "",
-        "### Contribution template (paste into the issue body, fill the brackets)",
-        "",
-        "````markdown",
-        "## What I was trying to do",
-        "[1-2 sentences. The agent's task / the spec / what success would look like.]",
-        "",
-        "## Did the agent succeed?",
-        "- [ ] Yes, fully",
-        "- [ ] Partially (explain: ...)",
-        "- [ ] No (explain: ...)",
-        "",
-        "## Which auto-detected patterns were bad-in-context vs neutral?",
-        "For each row in the report's 'Issues & Patterns to Improve' table, mark BAD / NEUTRAL / FALSE-POSITIVE and add 1 line of why.",
-        "",
-        "Example:",
-        "- Probe sprawl (3 files): BAD — agent never committed to a draft, kept researching.",
-        "- Repeat-bash (`tail -f log` × 8): NEUTRAL — I was waiting on a long scrape, no clean alternative.",
-        "- No-progress cluster (12 reads): FALSE-POSITIVE — I was reviewing code, not stuck.",
-        "",
-        "## What should the agent have done instead?",
-        "[Optional but high value. If you know, write it. If you don't, leave blank — the maintainers will analyze.]",
-        "",
-        "## Anything else (new pattern the auto-detector missed, environment quirks, etc.)",
-        "[Optional.]",
-        "",
-        "## Raw session report (redact before pasting!)",
-        "[Paste the rest of this report below.]",
-        "````",
-        "",
-        "### Before pasting, redact:",
-        "- Absolute file paths (`/Users/.../`, `/home/.../`)",
-        "- Environment-specific URLs, internal hostnames, API endpoints with credentials",
-        "- Any tokens, keys, passwords accidentally captured in bash output",
-        "- Project-identifying names if confidential",
-        "",
-        "**Why this template:** without 'what you were trying to do' and 'was this bad-in-context', maintainers can't judge whether a flagged pattern is actually a problem or just an observation. Filling the 5 fields takes ~2 minutes and makes the difference between an actionable report and a tool-call dump.",
-        "",
-    ]
-
-
 def generate_report(events: list) -> str:
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
     sessions = split_sessions(events)
@@ -422,6 +503,11 @@ def generate_report(events: list) -> str:
     hook_errors = load_hook_errors()
     lines.extend(format_hook_errors_section(hook_errors))
 
+    # Show what self-learning context (if any) was injected at SessionStart so
+    # the user can see why the agent was steered toward/away from patterns.
+    injection_text = read_last_injection()
+    lines.extend(format_injection_section(injection_text))
+
     # Aggregate auto-detection across all sessions
     all_findings = []
     for session in sessions:
@@ -435,8 +521,6 @@ def generate_report(events: list) -> str:
         lines.append(format_session(session, i))
         lines.append("---")
         lines.append("")
-
-    lines.extend(share_footer())
 
     return "\n".join(lines)
 
@@ -460,6 +544,19 @@ def main():
     report_path = os.path.join(REPORTS_DIR, f"report_{ts}.md")
     with open(report_path, "w", encoding="utf-8") as f:
         f.write(report)
+
+    # Update the cross-session memory (Layer 2 self-learning) with what we
+    # detected this run. Best-effort: failure here must NOT prevent the
+    # report from being saved or the log from being rotated.
+    try:
+        sessions = split_sessions(events)
+        findings_by_session = [
+            sorted({f["id"] for f in detect_patterns(s) if "id" in f})
+            for s in sessions
+        ]
+        update_memory(findings_by_session, datetime.datetime.now().isoformat(timespec="seconds"))
+    except Exception:
+        pass  # never break Stop-hook behavior on memory write
 
     # Truncate the raw log after archiving to keep it clean for next session
     open(LOG_FILE, "w").close()
