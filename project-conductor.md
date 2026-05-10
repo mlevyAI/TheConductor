@@ -183,7 +183,7 @@ I can set up permission rules so I won't ask you for every `npm run build` or `g
 
 Three opt-in bundles ship with project-conductor (all PURELY LOCAL — no network, no secret reads). The 9 **enforcement hooks** (Phase B backstops + v6 replayability) are NOT in this offer — they're auto-installed in Phase 0a (see above) because they're part of the conductor's operational identity. The bundles below cover monitoring / observability / recovery only:
 
-**(1) agent-monitor/** — session reports + auto-flagged anti-patterns (probe loops, busy-waits, no-progress clusters). Logs every tool call's bash command + agent prompt snippet to `agent-monitor/activity.jsonl`. Privacy-relevant — review before installing.
+**(1) agent-monitor/** — session reports + auto-flagged anti-patterns (probe loops, busy-waits, no-progress clusters). Logs every tool call's bash command + agent prompt snippet to `agent-monitor/activity.jsonl`. **Cross-session self-learning (v6.1.0+):** maintains a per-project `memory.json` and at the start of each new session injects a short advisory about anti-patterns this project has tripped before — purely local, top 5 patterns / ~300 tokens, opt-out via `touch .claude/agent-monitor/selflearn.disabled`. Privacy-relevant — review before installing.
 **(2) hooks/heartbeat.py** — `.conductor/heartbeat.json` after every tool call (parent visibility for backgrounded mode). Tracks tool counts and stuck-detection.
 **(3) hooks/usage_limit_wakeup.py** — auto-resume after API rate / usage limit via ScheduleWakeup. Watches PostToolUse for usage-limit error patterns.
 
