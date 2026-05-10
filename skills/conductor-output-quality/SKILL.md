@@ -22,11 +22,11 @@ The conductor invokes this skill after producing any structured output, BEFORE d
 
 ## Procedure
 
-1. **Load the output and compute fill-rate per column and per row:**
+1. **Load the output and compute fill-rate per column and per row.** Each scan command below is independent of the others (it inspects the file at rest). When more than one scan applies to the same output (e.g., both schema query and per-column null counts on a SQLite DB), or when a prior-run delta is requested (which reads a *different* file), issue the scans as a 📦 batch — single assistant turn, parallel tool calls. The conductor body's `## Reality verification` parallel-tool-call hygiene applies here as well.
    - For CSV/JSONL: count rows, then per column count non-null/non-empty values; per row count non-null/non-empty cells
    - For JSON: walk the structure; flag any array of objects where a key has 0 or near-0 non-null values across the array
    - For XLSX: same logic per sheet, per column
-   - For SQLite/Parquet: query schema; for each column, count NULL and non-NULL; for each row, count NULL across all columns
+   - For SQLite/Parquet: query schema; for each column, count NULL and non-NULL; for each row, count NULL across all columns. The schema query and the per-column NULL counts are independent reads → 📦 batch.
 
 2. **Anomalies to flag (any one triggers a finding):**
 
