@@ -151,8 +151,9 @@ Between finishing Phase 0 and starting Phase 1, you MUST emit the First Response
 - **NO `Edit` calls** anywhere
 - **NO `Bash` calls** that mutate the working tree (no source `mkdir`, no `touch`, no `pip install`, no `playwright install`, no `git add/commit`, no network probes against spec-named target sites)
 - **NO `Task` dispatches** to subagents
+- **NO `Read` calls against the project spec body.** The ONLY pre-gate spec interaction is `wc -l <spec>` (to populate `### 📋 Spec analysis` size and to decide whether the splitter is needed). Reading the spec body to "get a head start on Phase 1" is exactly what this gate forbids — Phase 1 fields render as `[pending Phase 1]` per `conductor-first-response` §Procedure step 4. Paginated reads (`limit ≤ 500`) do NOT exempt the project spec from this rule.
 
-Allowed while waiting: `Read`, `Grep`, `Glob`, and read-only `Bash` if the user asks a clarifying question. The First Response is itself the gate — emitting it without then *stopping* defeats the gate. **This rule overrides `⏵⏵ accept edits on` mode.** Auto-accept does not authorize skipping the offers; it only suppresses per-edit prompts. Failure to honor this gate is a v4.1 hard-stop class violation. Log to `decisions.md` and surface to user.
+Allowed while waiting: `Read` (excluding the project spec body — see above), `Grep`, `Glob`, and read-only `Bash` if the user asks a clarifying question. The First Response is itself the gate — emitting it without then *stopping* defeats the gate. **This rule overrides `⏵⏵ accept edits on` mode.** Auto-accept does not authorize skipping the offers; it only suppresses per-edit prompts. Failure to honor this gate is a v4.1 hard-stop class violation. Log to `decisions.md` and surface to user.
 
 ### Response template
 
@@ -194,15 +195,23 @@ On bundle install, the conductor uses `lib.hooks_manifest.render_settings_block(
 
 ## Phase 1 — Spec Analysis & Enrichment
 
-**Large-spec check (before enrichment):**
+### 🛑 First action of Phase 1 (HARD ORDERING)
+
+The **literal first** Phase 1 action — before any Read of the spec body, before any enrichment scaffolding, before any `decisions.md` write — is:
+
 ```bash
 wc -l < <spec-file>
 ```
-If line count > 300 → **invoke skill `conductor-spec-splitter`** first. The skill splits the spec into focused parts (≤250 lines each) plus a global-header, writes `.conductor/spec-parts/manifest.json`, and returns part file paths. Enrichment then runs once per part instead of on the full document.
 
-If line count ≤ 300 → skip the splitter and proceed directly to enrichment below.
+Branching on the result:
+- **> 300 lines** → **invoke skill `conductor-spec-splitter` IMMEDIATELY**. Do NOT Read the spec body to "understand it first" — the skill does the structural scan for you and writes `.conductor/spec-parts/manifest.json` + part files + global-header. Only AFTER the manifest exists may you Read spec content, and you Read part files (`.conductor/spec-parts/part-N.md`) — never the original spec — for the rest of the session.
+- **≤ 300 lines** → skip the splitter; Read the full spec directly and proceed to `conductor-spec-enrichment`.
 
-**Enforcement (v6).** This rule is now backed by `hooks/pre_spec_split_enforce.py` (PreToolUse on `Read`). Attempting to read a spec-shaped file > 300 lines without `.conductor/spec-parts/manifest.json` present will be blocked at the runtime layer. Override paths if absolutely necessary: paginate (`limit ≤ 500` is allowed), or `touch .conductor/.spec-split-skipped` to opt out (logged to `findings.md`). The hook does NOT trigger on `README.md`, `CHANGELOG.md`, `project-conductor.md`, `*.test.md`, or files under `.conductor/`, `.git/`, `node_modules/`.
+**Why the strict ordering matters.** Reading a 1500-line spec in three `limit=500` chunks dumps ~25k tokens of spec content into every subsequent dispatch envelope's enclosing context. The splitter exists specifically to keep per-dispatch context at O(part) instead of O(spec). Bypassing it — even via "innocent" pagination — defeats v6's replayability cost model. This is not a stylistic preference; it is a measurable cost regression.
+
+**Pagination is NOT an escape hatch for the project spec.** The runtime hook `pre_spec_split_enforce.py` permits `Read` with `limit ≤ 500` as a safety valve for unrelated long documents. The conductor agent MUST NOT use that valve on the project spec. If you find yourself about to Read the spec with an `offset`/`limit`, stop — the splitter is what you actually want.
+
+**Enforcement (v6).** Backed by `hooks/pre_spec_split_enforce.py` (PreToolUse on `Read`). Attempting to Read a spec-shaped file > 300 lines without `.conductor/spec-parts/manifest.json` present will be blocked at the runtime layer. Override paths if absolutely necessary: paginate `limit ≤ 500` (for non-spec docs only — see above), or `touch .conductor/.spec-split-skipped` to opt out (logged to `findings.md`). The hook does NOT trigger on `README.md`, `CHANGELOG.md`, `project-conductor.md`, `*.test.md`, or files under `.conductor/`, `.git/`, `node_modules/`.
 
 → **invoke skill `conductor-spec-enrichment`** (handles spec backup, audit, complexity scoring, enrichment annotations, diff generation, and the mandatory Phase-2 gate). When a manifest exists, run enrichment on each part file in sequence; merge results into a single `plan.md` and `routing.md`.
 
