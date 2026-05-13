@@ -258,7 +258,7 @@ def test_plan_mode_none_omits_tag():
     assert "<plan-mode>" not in result
 
 
-@pytest.mark.parametrize("value", ["required", "recommended", "skip"])
+@pytest.mark.parametrize("value", ["mandatory", "recommended", "skip"])
 def test_plan_mode_renders_tag(value):
     """Each valid plan_mode value renders as a tag in the envelope."""
     result = build_prompt(
@@ -280,7 +280,7 @@ def test_plan_mode_position_after_complexity():
     result = build_prompt(
         task="Do X",
         complexity=8,
-        plan_mode="required",
+        plan_mode="mandatory",
         reminder="Be thorough",
     )
     # complexity comes first, then plan-mode, then the reminder.

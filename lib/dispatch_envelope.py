@@ -4,7 +4,7 @@
 """
 
 
-_PLAN_MODE_VALUES = ("required", "recommended", "skip")
+_PLAN_MODE_VALUES = ("mandatory", "recommended", "skip")
 
 
 def build_prompt(
@@ -29,7 +29,8 @@ def build_prompt(
     assembled prompt exceeds 4% of context_window.
 
     ``plan_mode``: optional v6.1.4 hint for write-bearing subagents. One of
-    ``"required"`` (subagent MUST enter plan mode before writing),
+    ``"mandatory"`` (subagent MUST enter plan mode before writing — name
+    matches the user's CLAUDE.md `## Mandatory plan mode` vocabulary),
     ``"recommended"`` (suggested for cross-file coordination), or
     ``"skip"`` (explicit no — useful when the routing rubric wants to
     document the decision). ``None`` omits the tag entirely (the default —
