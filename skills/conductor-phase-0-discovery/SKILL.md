@@ -1,7 +1,7 @@
 ---
 name: conductor-phase-0-discovery
 description: Run TheConductor's Phase 0 environment scan — discover available subagents, skills, MCPs, CLIs, and project signals using a strict two-tier lazy approach. Phase 0 is READ-ONLY; no Write, no Edit, no source-tree mkdir, no target-site network probes.
-allowed-tools: Read, Glob, Grep, Bash(ls,find,grep,git,jq,which,test,cat,wc,command,head,tail)
+allowed-tools: Read, Glob, Grep, Bash(ls,find,grep,git,jq,which,test,cat,wc,command,head,tail,mkdir)
 ---
 
 ## When to invoke

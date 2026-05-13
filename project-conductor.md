@@ -123,14 +123,33 @@ The amendment was made because Phase 0a auto-install is the only path to bulletp
 Runs **before Phase 0**, only when `.conductor/state.json` is absent (first conductor session in this project). This timing is mandatory: `pre_phase0_readonly.py` once active will block writes to `.claude/settings.json`, so the auto-install must complete before that hook is wired.
 
 **Procedure:**
+
+0. **Git baseline preflight** (v6.1.3+). Before any hooks-install work, ensure the project is inside a git tree — v6's "every task is replayable" promise depends on commit history.
+   - a. Run `git rev-parse --is-inside-work-tree 2>/dev/null`. Exit code 0 → project (or an ancestor directory) is already a git repo; skip to step 1.
+   - b. Non-zero exit → run `git init` in `<project>/` to create a fresh repo. Same no-prompt rationale as the hooks install: v6 replayability is part of the conductor's operational identity. The user can opt out post-hoc by `rm -rf .git` if they really don't want it, but the default is a git baseline.
+   - c. Important: do NOT `git init` if step 0a found an ancestor repo, even if the project root itself has no `.git/`. Creating a nested repo inside another repo is a footgun (commits go to the inner repo silently while `git status` from the ancestor doesn't see them). When inside an ancestor repo, log a single advisory line to `findings.md` ("Project lives inside ancestor git repo at <path>; v6 evidence commits will land there") and continue.
+   - d. Log the chosen path ("Phase 0a auto-init: created git repo for v6 replayability" or "Phase 0a: existing git tree detected at <path>") to `decisions.md`. Surface the auto-init in the First Response's `### 🛡️ Enforcement hooks installed` section so the user sees the `.git/` directory wasn't there before.
 1. Read `<repo>/hooks/MANIFEST.json` (load via `lib.hooks_manifest.load_manifest()`).
-2. Generate the settings.json `hooks` block via `lib.hooks_manifest.render_settings_block(["phase_b", "v6_replayability"], hook_dir="<absolute path to TheConductor>/hooks")`. This wires all 9 enforcement hooks in one shot.
+2. Generate the settings.json `hooks` block via `lib.hooks_manifest.render_settings_block(["phase_b", "v6_replayability"], hook_dir="<absolute path to TheConductor>/hooks")`. This wires all 9 enforcement hooks in one shot. **Return shape gotcha:** the function returns a *top-level settings fragment* `{"hooks": {...}}`, not the inner value. Merge it at the top level (`settings["hooks"] = fragment["hooks"]`); do NOT nest it under another `hooks:` key — that double-wraps to `{"hooks": {"hooks": {...}}}` and Claude Code silently ignores the inner block. See the `render_settings_block` docstring for the canonical merge pattern.
 3. Generate the matching `permissions.allow` entries via `lib.hooks_manifest.render_permissions(...)`.
-4. **Canary-gated write** — do NOT write to `<project>/.claude/settings.json` directly. A silently-broken settings file is worse than no settings file; that's why every settings write goes through a proposed-then-mv flow:
+4. **Canary-gated write** — do NOT write to `<project>/.claude/settings.json` directly. A silently-broken settings file is worse than no settings file; that's why every settings write goes through a proposed-then-validate-then-mv flow:
    - a. Build the merged JSON in memory: existing settings (if any) + new hooks block + new permissions entries. Preserve any user-authored top-level keys (`model`, `env`, etc.) and any pre-existing entries in `hooks.*`/`permissions.allow` — additive merge, never clobber.
    - b. Write the proposed merge to `.conductor/settings.proposed.json` first. Do NOT touch the real `.claude/settings.json` yet.
-   - c. Run a benign canary: `git status` (or `ls` if the project is not a git repo). If Claude Code prompts the user for what the new rules should have allowed → settings did not apply → DELETE `.conductor/settings.proposed.json`, log the failure to `findings.md`, surface a hard-stop to the user, do NOT proceed.
-   - d. On canary pass: `mv .conductor/settings.proposed.json <project>/.claude/settings.json`. Only after the move is the real settings file touched.
+   - c. **Schema canary (pre-mv).** Validate the proposed file parses as JSON and has the expected top-level shape:
+     ```bash
+     python3 -c "import json,sys; d=json.load(open('.conductor/settings.proposed.json')); \
+       assert 'hooks' in d, 'missing hooks key'; \
+       assert 'PreToolUse' in d['hooks'], 'missing hooks.PreToolUse'; \
+       assert isinstance(d['hooks']['PreToolUse'], list), 'hooks.PreToolUse is not a list'"
+     ```
+     Non-zero exit → the merge produced a malformed or double-wrapped fragment (the classic `render_settings_block` footgun from step 2). DELETE `.conductor/settings.proposed.json`, log the failure to `findings.md` with the actual JSON the validator saw, surface a hard-stop to the user, do NOT proceed.
+   - d. **Promote.** `mv .conductor/settings.proposed.json <project>/.claude/settings.json`. Only after this move is the real settings file touched.
+   - e. **Activation canary (post-mv).** Re-validate the deployed file:
+     ```bash
+     python3 -c "import json; json.load(open('<project>/.claude/settings.json'))"
+     ```
+     Non-zero exit means the file is unparseable on disk (rare, but a partial-write or filesystem hiccup can cause it). Surface a hard-stop with the file path so the user can inspect; do NOT delete it (user may want to recover authored content).
+   - **Why this replaces the old `git status` canary**: the previous design ran `git status` (or `ls`) after the merge to see if Claude Code prompted for newly-allowed commands. That tests whether the shell still works (always yes) — Claude Code reads `.claude/settings.json` at session start, not on every tool call, so an in-session settings change usually does not activate until session restart. The shell canary gave false confidence; the JSON validators above test the property we actually care about (well-formed file with the expected schema).
 5. Log "Phase 0a auto-install: 9 enforcement hooks wired" to `decisions.md` (single line, no `D###` ID needed — this is a setup event, not a routing decision).
 
 **No prompt to the user.** The 9 enforcement hooks are part of the conductor's operational identity — asking "do you want enforcement?" is asking "do you want the conductor to do its job?" The user signed up for that by invoking the conductor.

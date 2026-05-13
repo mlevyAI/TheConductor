@@ -29,6 +29,7 @@ A single rendered First Response with the structure below. The renderer MUST pre
 ### ⚙️ Running configuration
 - **Conductor model**: [opus / sonnet / haiku] + [low / medium / high] effort
 - **Estimated cost tier**: [💰 low / 💰💰 medium / 💰💰💰 high]
+- **Phase 0a state**: auto-install complete (enforcement hooks + git baseline if needed) — see §🛡️ Enforcement hooks installed below
 - **To change**: edit `model:` in this agent's frontmatter
 
 ### 🔍 What I found
@@ -57,6 +58,7 @@ Original backed up to `[path].original.md`.
 ### 🛡️ Enforcement hooks installed (Phase 0a auto-install)
 9 enforcement hooks were wired into `.claude/settings.json` before this response rendered. In practice, you'll notice them as follows:
 
+- **If your project wasn't a git repo**, I also ran `git init` for v6 replayability — every task's evidence folder lands in a real commit. (Phase 0a preflight; render this bullet only when auto-init actually fired)
 - **Before you reply `proceed`**, I cannot mutate the source tree — Write/Edit/Task calls bounce with a block message. (`pre_first_response_gate`)
 - **During Phase 0**, I cannot write anywhere outside `.conductor/`. (`pre_phase0_readonly`)
 - **Once tasks start**, each task declares a write list; I cannot edit files outside that list. (`pre_lock_enforcement`)
@@ -109,7 +111,7 @@ Reply "proceed" to begin, or address the permissions offer first. Ask "status" a
 4. Populate `### 📋 Spec analysis` from the spec file. If Phase 1 has not run yet, mark fields `[pending Phase 1]` rather than guessing.
 5. Populate `### 🎯 Notable routing decisions` with 3–5 representative routing calls (one per phase, ideally). Include the "best-effort" note verbatim.
 6. Populate `### ✍️ Spec enrichment` only if enrichment has run; otherwise omit the section body but keep the heading with `[pending]`.
-7. Render the `### 🛡️ Enforcement hooks installed (Phase 0a auto-install)` block verbatim from the template above. The 8 bullets are the canonical user-facing summary of what's in `hooks/MANIFEST.json` for bundles `phase_b` + `v6_replayability`. Do NOT paraphrase. If you've installed a hook that isn't covered by one of those bullets, add a bullet — don't silently drop it. The whole point of this section is so the user knows what just got wired into their project; filename-only lists fail that goal.
+7. Render the `### 🛡️ Enforcement hooks installed (Phase 0a auto-install)` block verbatim from the template above. The 8 hook bullets are the canonical user-facing summary of what's in `hooks/MANIFEST.json` for bundles `phase_b` + `v6_replayability`. Do NOT paraphrase. If you've installed a hook that isn't covered by one of those bullets, add a bullet — don't silently drop it. The whole point of this section is so the user knows what just got wired into their project; filename-only lists fail that goal. The leading "If your project wasn't a git repo" bullet is **conditional**: render it only when Phase 0a step 0 actually ran `git init`; omit the bullet entirely when an existing git tree was detected (no false bragging about work that didn't happen).
 8. Render the `### 🔐 Permissions setup offer` and `### 📦 Optional bundles offer` headings as pointers to the body sections; do not duplicate the offer content here.
 9. Populate `### ⚠️ Known interruption points ahead`, `### 🚫 Capability gaps`, and `### ❓ Pre-execution questions` only if applicable. If nothing to surface, write `None.` so the section is not silently dropped.
 10. Render `### 💰 Budget acknowledgment` and `### 🛑 Safety mechanisms active` verbatim from the template above — do not paraphrase or reorder. The Safety mechanisms list covers the conductor's *procedural* safeguards (turn checkpoints, anti-premature-failure, investigation budget, etc.); it is distinct from `### 🛡️ Enforcement hooks installed` above, which covers the runtime hooks. Both must render.
@@ -144,4 +146,5 @@ Spec requires Postgres writes. Phase 0 found no DB MCP, no `psql` CLI, no DB cre
 Render highlights:
 - `### 🚫 Capability gaps` enumerates the missing pieces and notes that Phase 2 dispatches involving DB writes will hard-stop until resolved.
 - `### ❓ Pre-execution questions` asks the user to either provide credentials, install `psql`, or scope the task to skip DB writes.
+- `### 🛡️ Enforcement hooks installed` still renders verbatim — the 9 enforcement hooks are part of the conductor's operational identity, not gated by external capabilities. The `git init` leading bullet renders only if Phase 0a actually auto-init'd the repo.
 - `### 🚀 Ready to proceed?` still renders, but the user is expected to address the gap before replying `proceed`.

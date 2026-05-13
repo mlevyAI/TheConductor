@@ -102,14 +102,26 @@ def render_settings_block(
     python_cmd: str = "python3",
     manifest: dict | None = None,
 ) -> dict:
-    """Render the `hooks` section for `.claude/settings.json`.
+    """Render a top-level settings fragment containing the `hooks` key.
+
+    Returns ``{"hooks": {...}}`` — a fragment you merge **at the top level**
+    of your settings dict. Do NOT nest the return value under another
+    ``hooks:`` key (that double-wraps and Claude Code silently ignores the
+    inner block). Correct merge::
+
+        settings["hooks"] = render_settings_block(...)["hooks"]
+        # or, additive over any pre-existing entries:
+        existing = settings.setdefault("hooks", {})
+        for event, entries in render_settings_block(...)["hooks"].items():
+            existing.setdefault(event, []).extend(entries)
 
     `hook_dir` should be the absolute directory in which hook scripts will
     be invoked (typically `<project>/.claude/hooks/` after the conductor
     has copied them there, or the in-repo `hooks/` for advanced users
     pointing directly at the source).
 
-    Returns a dict shaped:
+    Full return shape::
+
         {"hooks": {"PreToolUse": [{"hooks": [{...}, {...}]}], "Stop": [...]}}
     """
     m = manifest if manifest is not None else load_manifest()
