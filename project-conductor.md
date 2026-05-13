@@ -126,9 +126,12 @@ Runs **before Phase 0**, only when `.conductor/state.json` is absent (first cond
 1. Read `<repo>/hooks/MANIFEST.json` (load via `lib.hooks_manifest.load_manifest()`).
 2. Generate the settings.json `hooks` block via `lib.hooks_manifest.render_settings_block(["phase_b", "v6_replayability"], hook_dir="<absolute path to TheConductor>/hooks")`. This wires all 9 enforcement hooks in one shot.
 3. Generate the matching `permissions.allow` entries via `lib.hooks_manifest.render_permissions(...)`.
-4. Merge into existing `<project>/.claude/settings.json` (or create if absent). Preserve any user-authored entries.
-5. **Canary sanity test** (per the §3 settings-write contract): run a benign `git status` after the merge. If Claude Code prompts for what the rules should have allowed → settings did not apply → **revert** the merge, surface a hard-stop to the user, do NOT proceed.
-6. On canary pass: log "Phase 0a auto-install: 9 enforcement hooks wired" to `decisions.md` (single line, no `D###` ID needed — this is a setup event, not a routing decision).
+4. **Canary-gated write** — do NOT write to `<project>/.claude/settings.json` directly. A silently-broken settings file is worse than no settings file; that's why every settings write goes through a proposed-then-mv flow:
+   - a. Build the merged JSON in memory: existing settings (if any) + new hooks block + new permissions entries. Preserve any user-authored top-level keys (`model`, `env`, etc.) and any pre-existing entries in `hooks.*`/`permissions.allow` — additive merge, never clobber.
+   - b. Write the proposed merge to `.conductor/settings.proposed.json` first. Do NOT touch the real `.claude/settings.json` yet.
+   - c. Run a benign canary: `git status` (or `ls` if the project is not a git repo). If Claude Code prompts the user for what the new rules should have allowed → settings did not apply → DELETE `.conductor/settings.proposed.json`, log the failure to `findings.md`, surface a hard-stop to the user, do NOT proceed.
+   - d. On canary pass: `mv .conductor/settings.proposed.json <project>/.claude/settings.json`. Only after the move is the real settings file touched.
+5. Log "Phase 0a auto-install: 9 enforcement hooks wired" to `decisions.md` (single line, no `D###` ID needed — this is a setup event, not a routing decision).
 
 **No prompt to the user.** The 9 enforcement hooks are part of the conductor's operational identity — asking "do you want enforcement?" is asking "do you want the conductor to do its job?" The user signed up for that by invoking the conductor.
 
@@ -157,7 +160,7 @@ Allowed while waiting: `Read` (excluding the project spec body — see above), `
 
 ### Response template
 
-→ **invoke skill `conductor-first-response`** to render the canonical Environment Scan Complete envelope (running config, capabilities, spec analysis, routing decisions, permissions/bundles offers, safety mechanisms active, capability gaps, pre-execution questions, ready-to-proceed prompt). The skill is one-shot per session and is invoked only after `conductor-phase-0-discovery` returns. The hard gate above governs the wait-for-`proceed` semantics; the skill renders the envelope the gate is protecting. The `Permissions Offer` and `Optional Bundles Offer` sections that follow in this body remain the source of truth for those two sub-blocks — the skill points to them rather than duplicating their text.
+→ **invoke skill `conductor-first-response`** to render the canonical Environment Scan Complete envelope (running config, capabilities, spec analysis, routing decisions, spec enrichment status, enforcement hooks installed in Phase 0a, permissions/bundles offers, capability gaps, budget acknowledgment, procedural safeguards, pre-execution questions, ready-to-proceed prompt). The skill is one-shot per session and is invoked only after `conductor-phase-0-discovery` returns. The hard gate above governs the wait-for-`proceed` semantics; the skill renders the envelope the gate is protecting. The `Permissions Offer` and `Optional Bundles Offer` sections that follow in this body remain the source of truth for those two sub-blocks — the skill points to them rather than duplicating their text.
 
 ## Permissions Offer
 

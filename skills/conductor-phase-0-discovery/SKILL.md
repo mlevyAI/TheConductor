@@ -19,10 +19,13 @@ The conductor invokes this skill at the start of every session, immediately afte
 
 - `.conductor/locks/` directory (created via `mkdir -p`)
 - `.conductor/evidence/` directory (created via `mkdir -p`)
+- `.conductor/probes/` directory (created via `mkdir -p`) — canonical home for throwaway exploration artifacts per `project-conductor.md` §Investigation budget; created in Phase 0 to avoid a later mkdir during a more sensitive phase
 - `.conductor/environment.md` — capability inventory snapshot, written by the conductor body after this skill returns
 - A capability dictionary returned to the conductor body, used to populate the First Response "What I found" section
 
-The skill itself MUST NOT use `Write` or `Edit` for any file outside `.conductor/`. The only write operation allowed is the two `mkdir -p` calls listed above. Source-directory `mkdir`, `Write`, `Edit`, `pip install`, `playwright install`, and any outbound network request to a target site/API named in the spec are all forbidden until the user has replied `proceed` to the First Response gate.
+The skill itself MUST NOT use `Write` or `Edit` for any file outside `.conductor/`. The only write operations allowed are the three `mkdir -p` calls listed above. Source-directory `mkdir` (anything outside `.conductor/`), `Write`, `Edit`, `pip install`, `playwright install`, and any outbound network request to a target site/API named in the spec are all forbidden until the user has replied `proceed` to the First Response gate.
+
+**Do not Read the project spec body during Phase 0** — not even with `offset`/`limit ≤ 500`. The runtime hook `pre_spec_split_enforce.py` permits paginated reads as a safety valve for unrelated long documents, but the conductor agent's discipline rule (`project-conductor.md` §First Response HARD GATE) forbids it on the project spec. Use `wc -l <spec>` for the size signal in `### 📋 Spec analysis`; the spec body waits until Phase 1, where `conductor-spec-splitter` handles >300-line specs and `conductor-spec-enrichment` handles the rest.
 
 ## Procedure
 

@@ -1,6 +1,6 @@
 ---
 name: conductor-first-response
-description: Render TheConductor's canonical First Response — the "Environment Scan Complete" envelope that surfaces running config, capabilities, spec analysis, routing decisions, permissions/bundles offers, safety mechanisms, and the proceed prompt. Invoked once per session, after Phase 0 discovery and before any source-tree mutation. The body must wait for the user to reply `proceed` after this skill renders.
+description: Render TheConductor's canonical First Response — the "Environment Scan Complete" envelope that surfaces running config, capabilities, spec analysis, routing decisions, enforcement hooks installed in Phase 0a, permissions/bundles offers, procedural safeguards, and the proceed prompt. Invoked once per session, after Phase 0 discovery and before any source-tree mutation. The body must wait for the user to reply `proceed` after this skill renders.
 allowed-tools: Read
 ---
 
@@ -21,7 +21,7 @@ The skill MUST NOT be invoked outside this single first-emission moment. If the 
 
 ## Outputs
 
-A single rendered First Response with the structure below. The renderer MUST preserve all 13 sub-sections in the listed order (running config → ready to proceed) so downstream tests and the `pre_first_response_gate` hook can detect the canonical shape.
+A single rendered First Response with the structure below. The renderer MUST preserve all 14 sub-sections in the listed order (running config → ready to proceed) so downstream tests and the `pre_first_response_gate` hook can detect the canonical shape.
 
 ```
 ## Project Conductor — Environment Scan Complete
@@ -53,6 +53,20 @@ A single rendered First Response with the structure below. The renderer MUST pre
 ### ✍️ Spec enrichment
 I've annotated your spec with `<!-- Added by Conductor -->` markers.
 Original backed up to `[path].original.md`.
+
+### 🛡️ Enforcement hooks installed (Phase 0a auto-install)
+9 enforcement hooks were wired into `.claude/settings.json` before this response rendered. In practice, you'll notice them as follows:
+
+- **Before you reply `proceed`**, I cannot mutate the source tree — Write/Edit/Task calls bounce with a block message. (`pre_first_response_gate`)
+- **During Phase 0**, I cannot write anywhere outside `.conductor/`. (`pre_phase0_readonly`)
+- **Once tasks start**, each task declares a write list; I cannot edit files outside that list. (`pre_lock_enforcement`)
+- **Large specs (>300 lines)** must go through the splitter first — I cannot Read them whole. (`pre_spec_split_enforce`)
+- **Busy-wait loops** (`until ... sleep ...`, long leading sleeps) are forbidden — I'll use ScheduleWakeup instead. (`pre_busy_wait_block`)
+- **After every structured output** (CSV/JSON/XLSX/Parquet), I get a quality check that flags empty columns and low fill-rate. (`post_output_quality`)
+- **At session end**, I verify FINAL_REPORT has all required sections and that every task's evidence folder has a `commit_sha`. (`stop_validate_final_report`, `stop_evidence_completeness_check`)
+- **Advisory only**: if `.conductor/` is gitignored, I'll warn once — v6 replayability needs commit history. (`pre_state_committed`)
+
+Remove any hook by editing `.claude/settings.json` and deleting its entry from `hooks.PreToolUse`/`hooks.PostToolUse`/`hooks.Stop`. The canonical list with descriptions lives in `hooks/MANIFEST.json` inside the conductor repo.
 
 ### 🔐 Permissions setup offer
 [See Permissions Offer in the conductor body — MANDATORY to surface]
@@ -95,14 +109,16 @@ Reply "proceed" to begin, or address the permissions offer first. Ask "status" a
 4. Populate `### 📋 Spec analysis` from the spec file. If Phase 1 has not run yet, mark fields `[pending Phase 1]` rather than guessing.
 5. Populate `### 🎯 Notable routing decisions` with 3–5 representative routing calls (one per phase, ideally). Include the "best-effort" note verbatim.
 6. Populate `### ✍️ Spec enrichment` only if enrichment has run; otherwise omit the section body but keep the heading with `[pending]`.
-7. Render the `### 🔐 Permissions setup offer` and `### 📦 Optional bundles offer` headings as pointers to the body sections; do not duplicate the offer content here.
-8. Populate `### ⚠️ Known interruption points ahead`, `### 🚫 Capability gaps`, and `### ❓ Pre-execution questions` only if applicable. If nothing to surface, write `None.` so the section is not silently dropped.
-9. Render `### 💰 Budget acknowledgment` and `### 🛑 Safety mechanisms active` verbatim from the template above — do not paraphrase or reorder.
-10. Emit the rendered envelope as the *only* user-visible output of this turn. The conductor body's hard gate then enforces the wait-for-`proceed` semantics.
+7. Render the `### 🛡️ Enforcement hooks installed (Phase 0a auto-install)` block verbatim from the template above. The 8 bullets are the canonical user-facing summary of what's in `hooks/MANIFEST.json` for bundles `phase_b` + `v6_replayability`. Do NOT paraphrase. If you've installed a hook that isn't covered by one of those bullets, add a bullet — don't silently drop it. The whole point of this section is so the user knows what just got wired into their project; filename-only lists fail that goal.
+8. Render the `### 🔐 Permissions setup offer` and `### 📦 Optional bundles offer` headings as pointers to the body sections; do not duplicate the offer content here.
+9. Populate `### ⚠️ Known interruption points ahead`, `### 🚫 Capability gaps`, and `### ❓ Pre-execution questions` only if applicable. If nothing to surface, write `None.` so the section is not silently dropped.
+10. Render `### 💰 Budget acknowledgment` and `### 🛑 Safety mechanisms active` verbatim from the template above — do not paraphrase or reorder. The Safety mechanisms list covers the conductor's *procedural* safeguards (turn checkpoints, anti-premature-failure, investigation budget, etc.); it is distinct from `### 🛡️ Enforcement hooks installed` above, which covers the runtime hooks. Both must render.
+11. Emit the rendered envelope as the *only* user-visible output of this turn. The conductor body's hard gate then enforces the wait-for-`proceed` semantics.
 
 ## Failure modes
 
-- **Section dropped or reordered.** The gate hook (`pre_first_response_gate.py`) and downstream tests assume the 13-section canonical shape. If any section is missing or out of order, the gate may fail open. Resolution: re-render from the template above; never edit-in-place.
+- **Section dropped or reordered.** The gate hook (`pre_first_response_gate.py`) and downstream tests assume the 14-section canonical shape. If any section is missing or out of order, the gate may fail open. Resolution: re-render from the template above; never edit-in-place.
+- **Hooks block reduced to filenames.** Listing `pre_phase0_readonly, pre_first_response_gate, ...` without explaining what each one does leaves the user with no mental model of what just got installed in their project. Resolution: render the workflow-narrative bullets from the template verbatim; users care about *behavior they will observe*, not Python filenames.
 - **Capability list overpopulated.** Listing every subagent/skill/MCP regardless of relevance defeats the purpose of the surface. Resolution: filter to "likely to be used" per spec analysis.
 - **Phase 1 fields filled with guesses.** If the spec hasn't been parsed yet, do not invent a phase count or token budget. Use `[pending Phase 1]` and let Phase 1 update the response.
 - **Rendered before user has acknowledged Phase 0 capability gaps.** Capability gaps (`### 🚫`) must be surfaced — silencing them turns the First Response into theatre. If any gap is detected, render it; do not omit.
@@ -117,6 +133,7 @@ Spec: a 4-phase web-scraping project. Phase 0 found 12 subagents, 8 skills, 2 MC
 Render highlights:
 - `### 🔍 What I found` lists `Frontend Developer`, `Backend Architect`, `Reality Checker` as planned subagents (filtered from 12 to 3 based on spec); both MCPs; and the 3 CLIs verbatim.
 - `### 🎯 Notable routing decisions` shows: scraping → Playwright MCP because the target is JS-rendered; report generation → Sonnet 4.5 because the formatting is structured but not novel; coverage matrix → `conductor-debug-map` skill.
+- `### 🛡️ Enforcement hooks installed` rendered verbatim (8 narrative bullets) — the user sees what behavior changes their project just inherited from Phase 0a.
 - `### 🚫 Capability gaps`: "None detected."
 - `### 🚀 Ready to proceed?` rendered verbatim.
 
