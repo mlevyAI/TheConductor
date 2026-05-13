@@ -25,6 +25,7 @@ The conductor invokes this skill once per task dispatch, after Phase 1 enrichmen
   model: <haiku|sonnet|opus|inherit>
   complexity: <N/10>
   pre-dispatch research: <required|optional|skip>
+  plan_mode: <required|recommended|skip>     # v6.1.4 — see Procedure §7
   files_write: <list — populated into the eventual active-task.json>
   ```
 - A row appended to `.conductor/routing.md` with the same content
@@ -59,7 +60,16 @@ The conductor invokes this skill once per task dispatch, after Phase 1 enrichmen
 
 6. **Files-write declaration:** extract from the task's "Files written" annotation. This list populates `active-task.json::files_write[]` for `pre_lock_enforcement.py` (Phase B onward).
 
-7. **Append routing.md row** with the decision and a one-line reason. Same row format used for consistency across the session — future task dispatches can match against it.
+7. **Plan-mode decision** (v6.1.4 — write-bearing subagents only):
+   - Read-only subagent (`Explore`, `Reality Checker`, `Evidence Collector`) → **always `skip`**. Plan mode is write-bearing only; emitting it for research dispatches is overhead without payoff.
+   - Complexity ≥ 7 AND `len(files_write) > 3` → **`required`**. Subagent MUST enter Claude Code plan mode before writing.
+   - Complexity ≥ 7 AND task names a sensitive area (schema, auth, billing, security, deploy) → **`required`**. Even one-file changes here benefit from a written approach before code.
+   - Complexity 4–6 AND `len(files_write) > 5` → **`recommended`**. Cross-file coordination is non-trivial but the formula is generally followable.
+   - Otherwise → **`skip`**.
+
+   Rationale: complements the enrichment Execution Plan rather than duplicating it. Enrichment is global-scope (one gate, all tasks) and floors the baseline; plan-mode is local-scope (just-in-time, subagent-authored) and fills in the file order, rollback strategy, and codebase-specific gotchas the enrichment formula cannot predict. The flag is **advisory** — a subagent that finds an Execution Plan block already detailed enough may downgrade `required` → noop in its own judgment, but should log that decision.
+
+8. **Append routing.md row** with the decision and a one-line reason. Same row format used for consistency across the session — future task dispatches can match against it.
 
 ## Examples
 

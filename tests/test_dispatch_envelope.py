@@ -249,6 +249,63 @@ def test_complexity_out_of_range_raises():
 
 
 # ---------------------------------------------------------------------------
+# plan_mode (v6.1.4)
+# ---------------------------------------------------------------------------
+
+def test_plan_mode_none_omits_tag():
+    """plan_mode=None (default) should not emit the tag."""
+    result = build_prompt(task="Do X", reminder="Be thorough")
+    assert "<plan-mode>" not in result
+
+
+@pytest.mark.parametrize("value", ["required", "recommended", "skip"])
+def test_plan_mode_renders_tag(value):
+    """Each valid plan_mode value renders as a tag in the envelope."""
+    result = build_prompt(
+        task="Do X",
+        plan_mode=value,
+        reminder="Be thorough",
+    )
+    assert f"<plan-mode>{value}</plan-mode>" in result
+
+
+def test_plan_mode_invalid_raises():
+    """Anything other than the 3 allowed values (or None) raises."""
+    with pytest.raises(ValueError, match="plan_mode must be"):
+        build_prompt(task="task", reminder="reminder text", plan_mode="maybe")
+
+
+def test_plan_mode_position_after_complexity():
+    """plan-mode renders between complexity and the reminder line."""
+    result = build_prompt(
+        task="Do X",
+        complexity=8,
+        plan_mode="required",
+        reminder="Be thorough",
+    )
+    # complexity comes first, then plan-mode, then the reminder.
+    idx_complexity = result.find("<complexity>")
+    idx_plan = result.find("<plan-mode>")
+    idx_reminder = result.find("Reminder:")
+    assert idx_complexity != -1 and idx_plan != -1 and idx_reminder != -1
+    assert idx_complexity < idx_plan < idx_reminder
+
+
+def test_plan_mode_works_in_split_mode():
+    """plan-mode tag must also render in the split (9-element) form."""
+    result = build_prompt(
+        task="X",
+        critical_context="C",
+        reference_context="R",
+        plan_mode="recommended",
+        reminder="Final reminder",
+        context_window=20,  # forces split form
+    )
+    assert "<critical-context>" in result
+    assert "<plan-mode>recommended</plan-mode>" in result
+
+
+# ---------------------------------------------------------------------------
 # Separator check
 # ---------------------------------------------------------------------------
 

@@ -4,6 +4,9 @@
 """
 
 
+_PLAN_MODE_VALUES = ("required", "recommended", "skip")
+
+
 def build_prompt(
     task: str,
     *,
@@ -15,6 +18,7 @@ def build_prompt(
     reference_context: str = "",
     effort_recommendation: str = "",
     complexity: int = 0,
+    plan_mode: str | None = None,
     reminder: str,
     context_window: int = 200_000,
 ) -> str:
@@ -24,12 +28,23 @@ def build_prompt(
     Switches from base (8-element) to split (9-element) format when the
     assembled prompt exceeds 4% of context_window.
 
-    Raises ValueError if reminder == task or complexity is out of range.
+    ``plan_mode``: optional v6.1.4 hint for write-bearing subagents. One of
+    ``"required"`` (subagent MUST enter plan mode before writing),
+    ``"recommended"`` (suggested for cross-file coordination), or
+    ``"skip"`` (explicit no — useful when the routing rubric wants to
+    document the decision). ``None`` omits the tag entirely (the default —
+    behaves like ``"skip"`` from the subagent's perspective, but doesn't
+    pollute the envelope with a no-op tag).
+
+    Raises ValueError if reminder == task, complexity is out of range, or
+    plan_mode is not in the allowed set.
     """
     if reminder.strip() == task.strip():
         raise ValueError("reminder must differ from task")
     if complexity != 0 and complexity not in range(1, 11):
         raise ValueError(f"complexity must be 1-10 (or 0 for unspecified), got {complexity}")
+    if plan_mode is not None and plan_mode not in _PLAN_MODE_VALUES:
+        raise ValueError(f"plan_mode must be one of {_PLAN_MODE_VALUES} or None, got {plan_mode!r}")
 
     threshold = int(context_window * 0.04)
 
@@ -48,6 +63,7 @@ def build_prompt(
         reference_context=None,
         effort_recommendation=effort_recommendation,
         complexity=complexity,
+        plan_mode=plan_mode,
         reminder=reminder,
         split=False,
         fmt_files=fmt_files,
@@ -64,6 +80,7 @@ def build_prompt(
             reference_context=reference_context,
             effort_recommendation=effort_recommendation,
             complexity=complexity,
+            plan_mode=plan_mode,
             reminder=reminder,
             split=True,
             fmt_files=fmt_files,
@@ -83,6 +100,7 @@ def _assemble(
     reference_context: str | None,
     effort_recommendation: str,
     complexity: int,
+    plan_mode: str | None,
     reminder: str,
     split: bool,
     fmt_files,
@@ -123,6 +141,10 @@ def _assemble(
     # 7/8. complexity — omit if 0
     if complexity != 0:
         elements.append(f"<complexity>{complexity}</complexity>")
+
+    # 7b/8b. plan-mode (v6.1.4) — omit if None
+    if plan_mode is not None:
+        elements.append(f"<plan-mode>{plan_mode}</plan-mode>")
 
     # 8/9. reminder — always present, plain text
     elements.append(f"Reminder: {reminder}")
