@@ -8,6 +8,44 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [6.1.1] — 2026-05-12
+
+Closes two ordering leaks that let the conductor begin Phase 1 work before the user replied `proceed`, and bypass the spec-splitter via paginated reads. Both observed in real sessions on specs larger than 300 lines; both invisible to the runtime hooks because the hooks deliberately allow `Read` with `limit ≤ 500` as a safety valve for unrelated long documents.
+
+**Why.** v6's replayability + cost model assumes the project spec is *never* loaded into the conductor's main context in full — only the relevant part-file plus the global header is. When the conductor reads a 1500-line spec in three `limit=500` chunks "to populate the First Response analysis fields," it dumps ~25k tokens of spec into every subsequent dispatch envelope's enclosing context. The bypass is silent: the existing `pre_spec_split_enforce.py` hook permits paginated reads (intentional — it must not block reading `CHANGELOG.md`, plugin docs, etc.), so the leak shows up only as elevated per-task token cost.
+
+The runtime hook fence stays as-is (broadening it would harm legitimate uses elsewhere). The fix is at the prompt-instruction layer where it belongs.
+
+### Changed
+
+- **`project-conductor.md` Hard Gate** — adds an explicit "NO `Read` calls against the project spec body" bullet to the pre-`proceed` constraint list, plus a clause that paginated reads (`limit ≤ 500`) do NOT exempt the project spec. The `Allowed while waiting` line is amended to exclude the project spec body. Phase 1 fields in the First Response remain `[pending Phase 1]` per `conductor-first-response` §Procedure step 4 — the gate does not need spec analysis to render.
+- **`project-conductor.md` Phase 1 opening** — renames `**Large-spec check (before enrichment):**` to `### 🛑 First action of Phase 1 (HARD ORDERING)` and rewrites the branching language to be unambiguous: `wc -l` is the literal first action, > 300 lines triggers `conductor-spec-splitter` IMMEDIATELY, and the rest of the session reads part files instead of the original spec. Adds two new paragraphs — "Why the strict ordering matters" (quantifies the ~25k-token cost regression) and "Pagination is NOT an escape hatch for the project spec" (closes the rationalization path the prior wording left open).
+
+### Unchanged
+
+- All 9 enforcement hooks under `hooks/`, including `pre_spec_split_enforce.py`. The `limit ≤ 500` escape hatch stays because it serves non-spec long documents.
+- `conductor-spec-splitter` skill — unchanged. Its trigger contract was already correct; the conductor body just wasn't honoring it consistently.
+- `conductor-first-response` skill — unchanged. The `[pending Phase 1]` placeholder semantics were already documented; the conductor body now matches them.
+- All other skills, agents, libs, tests, `install.sh`, `README.md`.
+
+### Migration
+
+None required. Existing installs benefit automatically on next session (the agent body is re-read each time). Users who pinned an old `~/.claude/agents/project-conductor.md` can re-run `install.sh` to update.
+
+### Repro of the failure mode this fixes
+
+Spec: any project spec > 300 lines. Invoke the conductor. Pre-v6.1.1 observed sequence:
+
+1. Phase 0a auto-installs enforcement hooks.
+2. Phase 0 discovery runs.
+3. **Without rendering the First Response**, the agent issues 3–4 paginated `Read` calls against the spec (offset 1/limit 120, then offset 120/limit 500, …) to populate Phase 1 analysis fields.
+4. The `limit ≤ 500` paginations slip past `pre_spec_split_enforce.py`.
+5. `.conductor/state.json`, `decisions.md`, `status.md` are written before the user has replied `proceed`.
+
+Post-v6.1.1: step 3 is forbidden by the prompt; the conductor renders the First Response with `[pending Phase 1]` and waits. Step 4 is forbidden by the new "pagination is not an escape hatch" clause; step 5 still happens (writes under `.conductor/` are explicitly allowed pre-gate) but no longer carries spec content into context.
+
+---
+
 ## [6.1.0] — 2026-05-10
 
 Adds **cross-session self-learning** to the optional `agent-monitor/` bundle. Per-project, purely local, opt-in via the bundle install (no new consent step). Complements — does not replace — the existing `.conductor/` resume layer.
