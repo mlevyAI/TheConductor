@@ -89,8 +89,9 @@ The skill itself MUST NOT use `Write` or `Edit` for any file outside `.conductor
 
 11. **Initialize state directory:**
     ```bash
-    mkdir -p .conductor/locks .conductor/evidence
+    mkdir -p .conductor/locks .conductor/evidence .conductor/probes
     ```
+    All three are listed in **Outputs** above. Creating `.conductor/probes/` here (rather than lazily mid-investigation) keeps the Phase 0 mkdir surface concentrated to a single eyeballed line and avoids a later mkdir during a more sensitive phase where `pre_phase0_readonly` or `pre_lock_enforcement` may fire on adjacent calls.
 
 12. **Build dynamic routing matrix (lazy):** "for capability X, use tool Y, fallback Z, or alert if missing." Do NOT pre-route every task. Routing happens just-in-time per task in Tier 2.
 
