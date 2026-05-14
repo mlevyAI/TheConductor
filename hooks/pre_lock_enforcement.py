@@ -38,13 +38,13 @@ if not os.path.exists(state_path):
 
 USER_GLOBAL = str(Path.home() / ".claude")
 _ACTIVE_TASK = os.path.join(os.getcwd(), ".conductor", "locks", "active-task.json")
-_FINDINGS = os.path.join(os.getcwd(), ".conductor", "findings.md")
+_ADVISORIES = os.path.join(os.getcwd(), ".conductor", "advisories.md")
 _FALLBACK_MARKER = os.path.join(os.getcwd(), ".conductor", ".lock_enforcement_fallback_logged")
 
 
-def _append_findings(msg: str) -> None:
+def _append_advisories(msg: str) -> None:
     try:
-        with open(_FINDINGS, "a", encoding="utf-8") as f:
+        with open(_ADVISORIES, "a", encoding="utf-8") as f:
             f.write(msg + "\n")
     except Exception:
         pass
@@ -94,7 +94,7 @@ def main():
     # Tolerant fallback: no declaration available yet (pre-Phase-D)
     if not files_write:
         if not os.path.exists(_FALLBACK_MARKER):
-            _append_findings(
+            _append_advisories(
                 "pre_lock_enforcement: no active-task.json::files_write[] yet "
                 "(pre-Phase-D); not enforcing this session"
             )

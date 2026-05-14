@@ -52,7 +52,7 @@ Compaction can fire mid-run. The most consequential outputs are written to disk 
 - `.conductor/evidence/tasks/<task-id>/` — per-task envelope, result, files+commit, decisions (v6, via `lib/evidence.py`)
 - `.conductor/state.json` — fields: `phase`, `gate`, `scaffold_written`
 - `.conductor/locks/active-task.json` and `.conductor/locks/*.json`
-- Hard-Stop classifications and Anti-Premature-Failure attempt counters in `findings.md`
+- Hard-Stop classifications and Anti-Premature-Failure attempt counters in `advisories.md`
 - This `## Compact Instructions` section itself
 
 **Discard**
@@ -74,7 +74,7 @@ v6 introduces four structured artifacts that turn `.conductor/` from a session l
 3. After the sub-agent returns: `evidence.write_result(task_id, completion_report_md)`
 4. After the per-task commit: `evidence.record_files(task_id, files_written=[...], commit_sha=..., tests_run=[...])` — REQUIRED. Without this, the coverage matrix and debug map cannot derive completion.
 
-**Structured decisions** — `lib/decisions.py`. For every routing choice, fix-vs-defer call, or material trade-off: `decisions.append_decision(summary, rationale=..., task_id=...)` returns a record with a stable `D###` ID. Reference that ID from `routing.md` / `findings.md` / `progress.md` instead of re-explaining. The function mirrors the entry to `evidence/tasks/<task-id>/decisions.json` automatically.
+**Structured decisions** — `lib/decisions.py`. For every routing choice, fix-vs-defer call, or material trade-off: `decisions.append_decision(summary, rationale=..., task_id=...)` returns a record with a stable `D###` ID. Reference that ID from `routing.md` / `advisories.md` / `progress.md` instead of re-explaining. The function mirrors the entry to `evidence/tasks/<task-id>/decisions.json` automatically.
 
 **Spec coverage matrix** — `lib/coverage.py`. During Phase 1 enrichment (after the user replies `approve enrichments`):
 1. For each acceptance criterion in the enriched spec: `coverage.register_criterion(text, source="spec.md:<line>")` → returns a `C###` ID
@@ -87,7 +87,7 @@ The matrix is the single answer to "are we done?" — Phase completion is no lon
 2. `debug_map.write_debug_map_md()` — refreshes `.conductor/debug-map.md`
 The phrase `KNOWN LIMITATION` remains banned (§v4); the helper rejects it. Limitations: `debug_map.add_limitation(name, description=..., approaches_tried=[...3+ items])` only.
 
-**State commit advisory.** The hook `pre_state_committed.py` (PreToolUse, opt-in via `install bundles`) checks `.gitignore` and writes a one-time advisory to `findings.md` if `.conductor/` is excluded — because v6 promises "go back to any task's evidence months later," and that promise breaks without git history. NEVER blocks. Always commits per task: stage and commit `.conductor/evidence/tasks/<task-id>/`, `decisions.md`, `coverage.json`, `debug-map.json` in the SAME commit as the task's source-code changes (so `git checkout <SHA>` restores both code and the evidence about it). Use a separate commit only when source code is unchanged for that task.
+**State commit advisory.** The hook `pre_state_committed.py` (PreToolUse, opt-in via `install bundles`) checks `.gitignore` and writes a one-time advisory to `advisories.md` if `.conductor/` is excluded — because v6 promises "go back to any task's evidence months later," and that promise breaks without git history. NEVER blocks. Always commits per task: stage and commit `.conductor/evidence/tasks/<task-id>/`, `decisions.md`, `coverage.json`, `debug-map.json` in the SAME commit as the task's source-code changes (so `git checkout <SHA>` restores both code and the evidence about it). Use a separate commit only when source code is unchanged for that task.
 
 **Recovery from compaction in v6.** Add to the recovery rule above: also read `coverage.json`, `debug-map.json`, and `evidence/tasks/<active-task-id>/manifest.json` if active.
 
@@ -127,7 +127,7 @@ Runs **before Phase 0**, only when `.conductor/state.json` is absent (first cond
 0. **Git baseline preflight** (v6.1.3+). Before any hooks-install work, ensure the project is inside a git tree — v6's "every task is replayable" promise depends on commit history.
    - a. Run `git rev-parse --is-inside-work-tree 2>/dev/null`. Exit code 0 → project (or an ancestor directory) is already a git repo; skip to step 1.
    - b. Non-zero exit → run `git init` in `<project>/` to create a fresh repo. Same no-prompt rationale as the hooks install: v6 replayability is part of the conductor's operational identity. The user can opt out post-hoc by `rm -rf .git` if they really don't want it, but the default is a git baseline.
-   - c. Important: do NOT `git init` if step 0a found an ancestor repo, even if the project root itself has no `.git/`. Creating a nested repo inside another repo is a footgun (commits go to the inner repo silently while `git status` from the ancestor doesn't see them). When inside an ancestor repo, log a single advisory line to `findings.md` ("Project lives inside ancestor git repo at <path>; v6 evidence commits will land there") and continue.
+   - c. Important: do NOT `git init` if step 0a found an ancestor repo, even if the project root itself has no `.git/`. Creating a nested repo inside another repo is a footgun (commits go to the inner repo silently while `git status` from the ancestor doesn't see them). When inside an ancestor repo, log a single advisory line to `advisories.md` ("Project lives inside ancestor git repo at <path>; v6 evidence commits will land there") and continue.
    - d. Log the chosen path ("Phase 0a auto-init: created git repo for v6 replayability" or "Phase 0a: existing git tree detected at <path>") to `decisions.md`. Surface the auto-init in the First Response's `### 🛡️ Enforcement hooks installed` section so the user sees the `.git/` directory wasn't there before.
 1. Read `<repo>/hooks/MANIFEST.json` (load via `lib.hooks_manifest.load_manifest()`).
 2. Generate the settings.json `hooks` block via `lib.hooks_manifest.render_settings_block(["phase_b", "v6_replayability"], hook_dir="<absolute path to TheConductor>/hooks")`. This wires all 9 enforcement hooks in one shot. **Return shape gotcha:** the function returns a *top-level settings fragment* `{"hooks": {...}}`, not the inner value. Merge it at the top level (`settings["hooks"] = fragment["hooks"]`); do NOT nest it under another `hooks:` key — that double-wraps to `{"hooks": {"hooks": {...}}}` and Claude Code silently ignores the inner block. See the `render_settings_block` docstring for the canonical merge pattern.
@@ -142,7 +142,7 @@ Runs **before Phase 0**, only when `.conductor/state.json` is absent (first cond
        assert 'PreToolUse' in d['hooks'], 'missing hooks.PreToolUse'; \
        assert isinstance(d['hooks']['PreToolUse'], list), 'hooks.PreToolUse is not a list'"
      ```
-     Non-zero exit → the merge produced a malformed or double-wrapped fragment (the classic `render_settings_block` footgun from step 2). DELETE `.conductor/settings.proposed.json`, log the failure to `findings.md` with the actual JSON the validator saw, surface a hard-stop to the user, do NOT proceed.
+     Non-zero exit → the merge produced a malformed or double-wrapped fragment (the classic `render_settings_block` footgun from step 2). DELETE `.conductor/settings.proposed.json`, log the failure to `advisories.md` with the actual JSON the validator saw, surface a hard-stop to the user, do NOT proceed.
    - d. **Promote.** `mv .conductor/settings.proposed.json <project>/.claude/settings.json`. Only after this move is the real settings file touched.
    - e. **Activation canary (post-mv).** Re-validate the deployed file:
      ```bash
@@ -151,6 +151,18 @@ Runs **before Phase 0**, only when `.conductor/state.json` is absent (first cond
      Non-zero exit means the file is unparseable on disk (rare, but a partial-write or filesystem hiccup can cause it). Surface a hard-stop with the file path so the user can inspect; do NOT delete it (user may want to recover authored content).
    - **Why this replaces the old `git status` canary**: the previous design ran `git status` (or `ls`) after the merge to see if Claude Code prompted for newly-allowed commands. That tests whether the shell still works (always yes) — Claude Code reads `.claude/settings.json` at session start, not on every tool call, so an in-session settings change usually does not activate until session restart. The shell canary gave false confidence; the JSON validators above test the property we actually care about (well-formed file with the expected schema).
 5. Log "Phase 0a auto-install: 9 enforcement hooks wired" to `decisions.md` (single line, no `D###` ID needed — this is a setup event, not a routing decision).
+
+6. **Bundle canary check** (v6.1.6+ — runs *after* the first non-canary tool call of the session so installed bundles have had a chance to fire). For each optional bundle the user installed in this session (`agent-monitor`, `heartbeat`, `usage_limit_wakeup`), check whether `.conductor/bundle-canary/<bundle>.json` exists. Each bundle's first hook invocation writes that file. If the file is missing after at least one PostToolUse-firing tool call has run, the bundle was wired in `.claude/settings.json` but did NOT actually fire. Log to `advisories.md`:
+   ```
+   ## advisory ({timestamp}): bundle `<name>` installed but hook not firing
+   Hooks are wired in `.claude/settings.json` but the bundle canary at
+   `.conductor/bundle-canary/<name>.json` was not written. Likely cause:
+   nested-dispatch context where Claude Code does not propagate project hooks
+   to dispatched sub-agents (see §Nested dispatch context). To verify the
+   bundle works, re-run the conductor as the main thread:
+       claude --agent project-conductor
+   ```
+   This check turns the previously-silent "bundle installed but never fires" failure mode into a visible advisory. The state.json `bundles_installed` field stays accurate (what was wired); the canary tells the user which of those wired bundles actually executed.
 
 **No prompt to the user.** The 9 enforcement hooks are part of the conductor's operational identity — asking "do you want enforcement?" is asking "do you want the conductor to do its job?" The user signed up for that by invoking the conductor.
 
@@ -233,7 +245,7 @@ Branching on the result:
 
 **Pagination is NOT an escape hatch for the project spec.** The runtime hook `pre_spec_split_enforce.py` permits `Read` with `limit ≤ 500` as a safety valve for unrelated long documents. The conductor agent MUST NOT use that valve on the project spec. If you find yourself about to Read the spec with an `offset`/`limit`, stop — the splitter is what you actually want.
 
-**Enforcement (v6).** Backed by `hooks/pre_spec_split_enforce.py` (PreToolUse on `Read`). Attempting to Read a spec-shaped file > 300 lines without `.conductor/spec-parts/manifest.json` present will be blocked at the runtime layer. Override paths if absolutely necessary: paginate `limit ≤ 500` (for non-spec docs only — see above), or `touch .conductor/.spec-split-skipped` to opt out (logged to `findings.md`). The hook does NOT trigger on `README.md`, `CHANGELOG.md`, `project-conductor.md`, `*.test.md`, or files under `.conductor/`, `.git/`, `node_modules/`.
+**Enforcement (v6).** Backed by `hooks/pre_spec_split_enforce.py` (PreToolUse on `Read`). Attempting to Read a spec-shaped file > 300 lines without `.conductor/spec-parts/manifest.json` present will be blocked at the runtime layer. Override paths if absolutely necessary: paginate `limit ≤ 500` (for non-spec docs only — see above), or `touch .conductor/.spec-split-skipped` to opt out (logged to `advisories.md`). The hook does NOT trigger on `README.md`, `CHANGELOG.md`, `project-conductor.md`, `*.test.md`, or files under `.conductor/`, `.git/`, `node_modules/`.
 
 → **invoke skill `conductor-spec-enrichment`** (handles spec backup, audit, complexity scoring, enrichment annotations, diff generation, and the mandatory Phase-2 gate). When a manifest exists, run enrichment on each part file in sequence; merge results into a single `plan.md` and `routing.md`.
 
@@ -254,6 +266,22 @@ Execute through all phases continuously. Don't stop between phases unless a Hard
 - If `pre-dispatch research: required` (or optional with budget): 📦 batch — issue all WebSearch/WebFetch calls (cap 3) in a single turn; the queries are independent by definition. Write the digest to `.conductor/evidence/<task-id>-research.md` (hard cap 2k tokens) and inject as `## Research Context` in dispatch prompt.
 
 **Dispatch via `Task` tool.** Wrap every task prompt with `lib/dispatch_envelope.py::build_prompt()` (XML envelope: `<task>`, `<constraints>`, `<files-write>`, `<acceptance>`, `<context>`, `<effort-recommendation>`, `<complexity>`, `<plan-mode>` (optional, v6.1.4+), `Reminder:` — or split 9-element form when prompt > 4% of sub-agent context window). Apply `apply_literalism_rules()` to the task text before passing it. Write `files_write` to `active-task.json::files_write[]` before dispatch (enables `pre_lock_enforcement`). Include explicit `model:` parameter when downgrade desired.
+
+**Routing.md is binding (v6.1.6+).** When `routing.md` names a subagent for a task (e.g., `frontend-developer`, `backend-architect`), the conductor body MUST dispatch — it is NOT an advisory hint to be reinterpreted in-process. The valid escape valves are: (a) the rubric output is `subagent: in-process` upfront (handle directly, no dispatch), (b) the `Task` tool is genuinely unavailable in this session (see §Nested dispatch context below — log a Decision and downgrade), or (c) the dispatch fails with a recoverable error (log + retry per the retry policy). Silently substituting in-process scaffolding for a routing.md decision that named a subagent is a v6.1.6 protocol violation — it defeats the point of having a routing decision in the first place. If you would have substituted, the rubric should have output `subagent: in-process` to begin with.
+
+### Nested dispatch context
+
+The canonical invocation is `claude --agent project-conductor` as the **main thread**. When the conductor is itself dispatched as a sub-agent (parent session uses the `Task` tool to spawn it), Claude Code does NOT propagate the `Task` tool to the nested conductor — even though the conductor's frontmatter lists `Task`. This is a platform behavior, not a v6 bug.
+
+**Detection.** At session start, attempt a no-op probe (e.g., check tool availability indirectly) or simply observe: if the first dispatch attempt against `Task` raises a tool-unavailable error, you are in nested context.
+
+**Behavior in nested context.** If `Task` is unavailable AND `routing.md` names subagents:
+1. Log a single Decision (e.g., `Dnnn — Task tool unavailable in nested context; downgrading routing.md decisions to in-process for this session`).
+2. Treat every named-subagent routing entry as if it were `subagent: in-process` for the remainder of the session.
+3. Continue execution. Do NOT silently scaffold without logging the Decision — the user needs to see why subagents weren't dispatched.
+4. The dispatch envelope persisted to `.conductor/evidence/tasks/<task-id>/envelope.xml` should still be written (even if `Task` isn't called) so the routing decision and `<plan-mode>` tag are auditable for a later top-level rerun.
+
+**Recovery.** A top-level `claude --agent project-conductor` rerun against the same project will see the existing `.conductor/state.json` and resume — at which point `Task` is available and the dispatch path can execute the routing entries that were deferred. The envelope.xml artifacts from the nested run accelerate the rerun.
 
 **`<plan-mode>` (v6.1.4+).** Optional dispatch hint set by `conductor-routing-rubric` step 7. Three values: `mandatory` (subagent MUST `EnterPlanMode` before writing code — name matches the user's CLAUDE.md `## Mandatory plan mode` vocabulary), `recommended` (suggested for cross-file coordination), `skip` (explicit no — useful when the rubric wants to document the decision for routing.md). Omit the tag entirely when None (the default). Fires `mandatory` for write-bearing dispatches with complexity ≥ 7 + >3 files written, OR complexity ≥ 7 in sensitive areas (schema/auth/billing/security/deploy). Read-only subagents (`Explore`, `Reality Checker`, `Evidence Collector`) never receive the flag — plan mode is write-bearing only. **Complements** the Phase 1 enrichment Execution Plan rather than duplicating it: enrichment is durable + global-scope; plan-mode is just-in-time + local-scope and fills in file order, rollback strategy, and codebase-specific gotchas the enrichment formula cannot predict.
 
@@ -435,7 +463,7 @@ When `.conductor/` exists at session start:
 1. Read `plan.md` — where are we?
 2. Read `environment.md` and re-scan (Tier 1 only — count agents/skills, don't deep-read)
 3. Compare scans — tools added/removed?
-4. Read `status.md`, `progress.md`, `decisions.md`, `findings.md`, `deviations.md`, `budget.md`
+4. Read `status.md`, `progress.md`, `decisions.md`, `advisories.md`, `deviations.md`, `budget.md`
 5. Clean stale locks via `python3 /path/to/TheConductor/lib/lock_check.py --current-session-id "<id>" --cleanup` (exit 1 → STOP and surface)
 6. Self-check (counts as #1 of new session): verify file state matches claims
 7. If discrepancies → surface to user. If environment changed → announce differences.

@@ -18,7 +18,7 @@ The conductor invokes this skill once per session, after the user replies `proce
 
 - `<spec-file>.original.md` — byte-for-byte backup of the user's spec
 - `<spec-file>` — annotated with `<!-- Added by Conductor -->` blocks per task
-- `.conductor/plan.md` — task list with statuses
+- `.conductor/plan.md` — task list with statuses + the **Gated Dependencies** section (v6.1.6+, see Procedure step 7b)
 - `.conductor/routing.md` — tool assignments with reasoning
 - `.conductor/spec-enrichment.diff` — focused diff of original vs enriched
 - `.conductor/spec-enrichment-summary.md` — categorized review for the user
@@ -116,6 +116,33 @@ The conductor invokes this skill once per session, after the user replies `proce
    - NFRs inferred
    - Architectural decisions
    - Routing decisions
+
+7a. **Hard-Stop blocking_keys cross-check** (v6.1.6+). For every task whose Execution Plan declares a Hard Stop on credentials, verify the listed `blocking_keys` actually match the external services the task reads/writes per the per-task `files_read`/dependencies. Common drift case: an enrichment lists "Reddit/Twitter/Google Trends" because that's what a vague spec section mentioned, but the per-resource discovery list for the same task actually uses RapidAPI/YouTube/Pinterest/NewsAPI/SerpAPI. The two must match — write the per-resource list into `blocking_keys`. If they can't be reconciled, surface as a Gap in the enrichment summary (do not write inconsistent values).
+
+7b. **Gated Dependencies section in `plan.md`** (v6.1.6+). Append a top-level section enumerating every dep/SDK whose addition triggers Hard Stop at flip-time. For each entry: name, when the gate fires (which phase/task), the install command, and a short rationale. Format:
+
+   ```markdown
+   ## Gated Dependencies (Hard Stop at flip-time)
+
+   The following packages are NOT installed during stub-mode scaffolding. The user must install them before switching from stub to live mode at the corresponding phase. The conductor will Hard Stop and prompt for these:
+
+   | Package | Gate fires at | Install command | Why gated |
+   |---|---|---|---|
+   | `stripe` | Phase 6 flip from stub → live | `pnpm add stripe` | Charges real money; explicit consent required |
+   | `@upstash/redis` | Phase 7 flip from in-memory limiter → durable | `pnpm add @upstash/redis` | Requires Upstash account + paid plan; affects every rate-limited route |
+   | `@sentry/nextjs` | Phase 9 deploy (optional) | `pnpm add @sentry/nextjs` | Pulls native runtime bindings; user may prefer alternative APM |
+   ```
+
+   This surfaces the install gates **at enrichment time** so the user sees them before approving, rather than at flip-time when they're a surprise.
+
+7c. **Production-hardening checklist for Phase 9** (v6.1.6+). The Phase 9 enrichment template must include a mandatory production-readiness checklist that subagents resolve before declaring Phase 9 complete. Minimum items:
+   - `production_csp_review`: tighten Content-Security-Policy headers — remove `'unsafe-eval'` / `'unsafe-inline'` by injecting nonces at middleware. Acceptable in stub mode; required for production.
+   - `secret_rotation_runbook`: document key rotation procedure (Supabase keys, Stripe keys, OAuth secrets) — even one paragraph in `DEPLOY.md` counts.
+   - `rls_default_deny_audit`: enumerate every table and assert RLS is enabled + default-deny is the baseline.
+   - `rate_limit_external_store_verified`: confirm rate limiters point at Upstash/Redis/equivalent — NOT in-memory Map on serverless.
+   - `webhook_signature_verification`: assert every external webhook (Stripe, etc.) verifies signatures.
+
+   Each checklist item gets a `C###` ID in coverage.json and must be linked to at least one task that satisfies it.
 
 8. **Surface to user (mandatory gate):**
    ```

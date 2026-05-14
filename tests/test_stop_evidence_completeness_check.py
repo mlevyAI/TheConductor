@@ -47,7 +47,7 @@ def _seed_task(cwd: Path, task_id: str, *, with_files: bool = False,
 
 
 def _findings(cwd: Path) -> str:
-    p = cwd / ".conductor" / "findings.md"
+    p = cwd / ".conductor" / "advisories.md"
     return p.read_text() if p.exists() else ""
 
 

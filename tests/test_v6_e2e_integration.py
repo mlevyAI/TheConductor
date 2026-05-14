@@ -399,7 +399,7 @@ def test_full_v6_lifecycle_spec_to_replay(tmp_path):
     # ------------------------------------------------------------------
     r = _run_hook("stop_evidence_completeness_check.py", project)
     assert r.returncode == 0
-    findings = project / ".conductor" / "findings.md"
+    findings = project / ".conductor" / "advisories.md"
     if findings.exists():
         # If a previous unrelated advisory was logged, it must NOT contain
         # this evidence-completeness signal
@@ -415,7 +415,7 @@ def test_full_v6_lifecycle_spec_to_replay(tmp_path):
 
     r = _run_hook("stop_evidence_completeness_check.py", project)
     assert r.returncode == 0
-    findings_text = (project / ".conductor/findings.md").read_text()
+    findings_text = (project / ".conductor/advisories.md").read_text()
     assert "incomplete v6 evidence" in findings_text
     assert "p2.t2" in findings_text
     assert "Implement login" in findings_text
@@ -511,13 +511,13 @@ def test_advisory_hooks_never_block(tmp_path):
     (tmp_path / ".gitignore").write_text(".conductor/\n")
     r = _run_hook("pre_state_committed.py", tmp_path, {})
     assert r.returncode == 0
-    assert "advisory" in (tmp_path / ".conductor/findings.md").read_text()
+    assert "advisory" in (tmp_path / ".conductor/advisories.md").read_text()
 
     # stop_evidence_completeness_check: incomplete task → advisory case
     evidence.init_task("p2.t1", task_name="x", phase=2, cwd=tmp_path)
     r = _run_hook("stop_evidence_completeness_check.py", tmp_path, {})
     assert r.returncode == 0
-    assert "incomplete v6 evidence" in (tmp_path / ".conductor/findings.md").read_text()
+    assert "incomplete v6 evidence" in (tmp_path / ".conductor/advisories.md").read_text()
 
 
 # ---------------------------------------------------------------------------
@@ -838,9 +838,9 @@ def test_full_conductor_session_writes_all_state_files(tmp_path):
     r = _run_hook("stop_evidence_completeness_check.py", project)
     assert r.returncode == 0
 
-    # findings.md should be free of v6 evidence advisories: every task
+    # advisories.md should be free of v6 evidence advisories: every task
     # has a recorded commit_sha
-    findings = project / ".conductor" / "findings.md"
+    findings = project / ".conductor" / "advisories.md"
     if findings.exists():
         assert "incomplete v6 evidence" not in findings.read_text()
 

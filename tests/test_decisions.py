@@ -147,3 +147,31 @@ def test_list_decisions_returns_ids_in_source_order(tmp_path):
     decisions.append_decision("b", cwd=tmp_path)
     decisions.append_decision("c", cwd=tmp_path)
     assert decisions.list_decisions(cwd=tmp_path) == ["D001", "D002", "D003"]
+
+
+# ---------------------------------------------------------------------------
+# DecisionRecord.to_dict() (v6.1.6+)
+# ---------------------------------------------------------------------------
+
+def test_to_dict_returns_all_fields(tmp_path):
+    record = decisions.append_decision(
+        "approve enrichments",
+        rationale="user replied 'approve enrichments'",
+        task_id="phase-1.foundation",
+        cwd=tmp_path,
+    )
+    d = record.to_dict()
+    assert d["decision_id"] == "D001"
+    assert d["summary"] == "approve enrichments"
+    assert d["rationale"] == "user replied 'approve enrichments'"
+    assert d["task_id"] == "phase-1.foundation"
+    assert isinstance(d["recorded_at"], str)
+    # exhaustive — no extra or missing fields
+    assert set(d.keys()) == {"decision_id", "summary", "rationale", "task_id", "recorded_at"}
+
+
+def test_to_dict_handles_none_task_id(tmp_path):
+    record = decisions.append_decision("setup event", cwd=tmp_path)
+    d = record.to_dict()
+    assert d["task_id"] is None
+    assert d["rationale"] == ""

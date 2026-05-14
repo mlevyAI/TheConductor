@@ -10,14 +10,14 @@ state_path = os.path.join(os.getcwd(), ".conductor", "state.json")
 if not os.path.exists(state_path):
     sys.exit(0)
 
-_FINDINGS = os.path.join(os.getcwd(), ".conductor", "findings.md")
+_ADVISORIES = os.path.join(os.getcwd(), ".conductor", "advisories.md")
 
 SQLITE_KEYWORDS = ("sqlite3", "INSERT INTO", "CREATE TABLE", ".import")
 
 
-def _append_findings(msg: str) -> None:
+def _append_advisories(msg: str) -> None:
     try:
-        with open(_FINDINGS, "a", encoding="utf-8") as f:
+        with open(_ADVISORIES, "a", encoding="utf-8") as f:
             f.write(msg + "\n")
     except Exception:
         pass
@@ -95,7 +95,7 @@ def main():
             )
 
     for issue in issues:
-        _append_findings(issue)
+        _append_advisories(issue)
 
     sys.exit(0)
 

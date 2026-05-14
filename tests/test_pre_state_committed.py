@@ -41,7 +41,7 @@ def test_noop_when_no_gitignore(tmp_path):
     _seed_state(tmp_path)
     r = _run(tmp_path)
     assert r.returncode == 0
-    assert not (tmp_path / ".conductor" / "findings.md").exists()
+    assert not (tmp_path / ".conductor" / "advisories.md").exists()
 
 
 def test_noop_when_gitignore_does_not_match(tmp_path):
@@ -49,7 +49,7 @@ def test_noop_when_gitignore_does_not_match(tmp_path):
     (tmp_path / ".gitignore").write_text("node_modules/\n.env\n")
     r = _run(tmp_path)
     assert r.returncode == 0
-    assert not (tmp_path / ".conductor" / "findings.md").exists()
+    assert not (tmp_path / ".conductor" / "advisories.md").exists()
 
 
 # ---------------------------------------------------------------------------
@@ -61,7 +61,7 @@ def test_advisory_when_conductor_is_gitignored(tmp_path):
     (tmp_path / ".gitignore").write_text(".conductor/\n")
     r = _run(tmp_path)
     assert r.returncode == 0
-    findings = (tmp_path / ".conductor" / "findings.md").read_text()
+    findings = (tmp_path / ".conductor" / "advisories.md").read_text()
     assert "advisory" in findings
     assert ".gitignore" in findings
 
@@ -71,7 +71,7 @@ def test_advisory_matches_bare_conductor(tmp_path):
     (tmp_path / ".gitignore").write_text(".conductor\n")
     r = _run(tmp_path)
     assert r.returncode == 0
-    assert (tmp_path / ".conductor" / "findings.md").exists()
+    assert (tmp_path / ".conductor" / "advisories.md").exists()
 
 
 def test_advisory_matches_rooted_form(tmp_path):
@@ -79,7 +79,7 @@ def test_advisory_matches_rooted_form(tmp_path):
     (tmp_path / ".gitignore").write_text("/.conductor/\n")
     r = _run(tmp_path)
     assert r.returncode == 0
-    assert (tmp_path / ".conductor" / "findings.md").exists()
+    assert (tmp_path / ".conductor" / "advisories.md").exists()
 
 
 def test_negation_suppresses_advisory(tmp_path):
@@ -87,7 +87,7 @@ def test_negation_suppresses_advisory(tmp_path):
     (tmp_path / ".gitignore").write_text(".conductor/\n!.conductor/\n")
     r = _run(tmp_path)
     assert r.returncode == 0
-    assert not (tmp_path / ".conductor" / "findings.md").exists()
+    assert not (tmp_path / ".conductor" / "advisories.md").exists()
 
 
 def test_comment_does_not_trigger(tmp_path):
@@ -95,7 +95,7 @@ def test_comment_does_not_trigger(tmp_path):
     (tmp_path / ".gitignore").write_text("# .conductor/\n")
     r = _run(tmp_path)
     assert r.returncode == 0
-    assert not (tmp_path / ".conductor" / "findings.md").exists()
+    assert not (tmp_path / ".conductor" / "advisories.md").exists()
 
 
 # ---------------------------------------------------------------------------
@@ -106,11 +106,56 @@ def test_advisory_logged_only_once(tmp_path):
     _seed_state(tmp_path)
     (tmp_path / ".gitignore").write_text(".conductor/\n")
     _run(tmp_path)
-    findings1 = (tmp_path / ".conductor" / "findings.md").read_text()
+    findings1 = (tmp_path / ".conductor" / "advisories.md").read_text()
     _run(tmp_path)
     _run(tmp_path)
-    findings2 = (tmp_path / ".conductor" / "findings.md").read_text()
+    findings2 = (tmp_path / ".conductor" / "advisories.md").read_text()
     assert findings1 == findings2
+
+
+# ---------------------------------------------------------------------------
+# v6.1.6+ — Probes-specific advisory
+# ---------------------------------------------------------------------------
+
+def test_probes_advisory_when_only_probes_gitignored(tmp_path):
+    """v6.1.6+ — gitignoring just `.conductor/probes/` fires a separate advisory."""
+    _seed_state(tmp_path)
+    (tmp_path / ".gitignore").write_text(".conductor/probes/\n")
+    r = _run(tmp_path)
+    assert r.returncode == 0
+    advisories = (tmp_path / ".conductor" / "advisories.md").read_text()
+    assert "probes" in advisories.lower()
+    # Should NOT include the whole-.conductor/ advisory
+    assert "`.conductor/` is in `.gitignore`" not in advisories
+
+
+def test_probes_advisory_idempotent(tmp_path):
+    _seed_state(tmp_path)
+    (tmp_path / ".gitignore").write_text(".conductor/probes/\n")
+    _run(tmp_path)
+    text1 = (tmp_path / ".conductor" / "advisories.md").read_text()
+    _run(tmp_path)
+    _run(tmp_path)
+    text2 = (tmp_path / ".conductor" / "advisories.md").read_text()
+    assert text1 == text2
+
+
+def test_probes_advisory_suppressed_by_negation(tmp_path):
+    _seed_state(tmp_path)
+    (tmp_path / ".gitignore").write_text(".conductor/probes/\n!.conductor/probes/\n")
+    r = _run(tmp_path)
+    assert r.returncode == 0
+    assert not (tmp_path / ".conductor" / "advisories.md").exists()
+
+
+def test_both_advisories_can_fire_together(tmp_path):
+    """If both `.conductor/` and `.conductor/probes/` are ignored, both advisories fire."""
+    _seed_state(tmp_path)
+    (tmp_path / ".gitignore").write_text(".conductor/\n.conductor/probes/\n")
+    _run(tmp_path)
+    advisories = (tmp_path / ".conductor" / "advisories.md").read_text()
+    assert "`.conductor/` is in `.gitignore`" in advisories
+    assert "probes" in advisories.lower()
 
 
 def test_marker_written_after_first_run(tmp_path):

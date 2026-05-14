@@ -9,7 +9,7 @@ state_path = os.path.join(os.getcwd(), ".conductor", "state.json")
 if not os.path.exists(state_path):
     sys.exit(0)
 
-_FINDINGS = os.path.join(os.getcwd(), ".conductor", "findings.md")
+_ADVISORIES = os.path.join(os.getcwd(), ".conductor", "advisories.md")
 
 REQUIRED_SECTIONS = [
     "executive summary",
@@ -29,9 +29,9 @@ _REPORT_CANDIDATES = [
 ]
 
 
-def _append_findings(msg: str) -> None:
+def _append_advisories(msg: str) -> None:
     try:
-        with open(_FINDINGS, "a", encoding="utf-8") as f:
+        with open(_ADVISORIES, "a", encoding="utf-8") as f:
             f.write(msg + "\n")
     except Exception:
         pass
@@ -57,7 +57,7 @@ def main():
     )
 
     if report_path is None:
-        _append_findings(
+        _append_advisories(
             "stop_validate_final_report: phase==complete but FINAL_REPORT.md not found. "
             "Run conductor-debug-map skill to generate it."
         )
@@ -66,7 +66,7 @@ def main():
     try:
         content = Path(report_path).read_text(encoding="utf-8", errors="replace").lower()
     except Exception:
-        _append_findings(
+        _append_advisories(
             f"stop_validate_final_report: FINAL_REPORT.md found at {report_path} "
             "but could not be read."
         )
@@ -74,7 +74,7 @@ def main():
 
     missing = [s for s in REQUIRED_SECTIONS if s not in content]
     if missing:
-        _append_findings(
+        _append_advisories(
             f"stop_validate_final_report: FINAL_REPORT.md missing sections: "
             f"{missing}. Report may be incomplete."
         )

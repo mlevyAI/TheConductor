@@ -42,6 +42,22 @@ class DecisionRecord:
     task_id: str | None
     recorded_at: str
 
+    def to_dict(self) -> dict:
+        """Return the record as a plain dict.
+
+        Convenience for callers that expected the legacy dict-shaped return
+        from `append_decision` (e.g., `record.to_dict().get("decision_id")`).
+        Fields match the dataclass: `decision_id`, `summary`, `rationale`,
+        `task_id`, `recorded_at`.
+        """
+        return {
+            "decision_id": self.decision_id,
+            "summary": self.summary,
+            "rationale": self.rationale,
+            "task_id": self.task_id,
+            "recorded_at": self.recorded_at,
+        }
+
 
 def decisions_path(cwd: str | os.PathLike | None = None) -> Path:
     base = Path(cwd) if cwd is not None else Path.cwd()
@@ -77,6 +93,11 @@ def append_decision(
     cwd: str | os.PathLike | None = None,
 ) -> DecisionRecord:
     """Append a structured decision and return its record.
+
+    Returns a ``DecisionRecord`` dataclass (frozen). Access fields by
+    attribute (``record.decision_id``) — **not** by ``.get("decision_id")``,
+    which raises ``AttributeError``. If you want dict-shaped access, call
+    ``record.to_dict()``.
 
     Side effects:
       1. Append a markdown block to `.conductor/decisions.md`.

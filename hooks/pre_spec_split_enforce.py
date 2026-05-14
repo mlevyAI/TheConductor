@@ -187,7 +187,7 @@ def main() -> int:
         "files ≤ 250 lines each, and Phase 1 enrichment will then run per-part.\n\n"
         "If you genuinely want to read the full file (override): "
         "`touch .conductor/.spec-split-skipped` and retry. Override is logged "
-        "to `findings.md` when used.\n\n"
+        "to `advisories.md` when used.\n\n"
         "Paginated reads (`limit` ≤ "
         f"{_PAGINATED_LIMIT_THRESHOLD}) are not blocked."
     )

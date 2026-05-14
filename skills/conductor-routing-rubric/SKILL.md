@@ -19,7 +19,7 @@ The conductor invokes this skill once per task dispatch, after Phase 1 enrichmen
 
 - A routing decision returned to the conductor body, structured as:
   ```
-  subagent: <name OR "none (inline)">
+  subagent: <name | "in-process" | "none (inline)">
   reason: <why this match>
   effort: <low|medium|high|xhigh>
   model: <haiku|sonnet|opus|inherit>
@@ -28,6 +28,10 @@ The conductor invokes this skill once per task dispatch, after Phase 1 enrichmen
   plan_mode: <mandatory|recommended|skip>     # v6.1.4 — see Procedure §7
   files_write: <list — populated into the eventual active-task.json>
   ```
+  **`subagent` vocabulary (v6.1.6+)**:
+  - **Named subagent** (e.g., `frontend-developer`, `backend-architect`) → conductor body MUST dispatch via `Task` tool. Binding contract — not advisory.
+  - **`in-process`** → trivial scaffolding / mechanical file generation that doesn't benefit from a dispatch envelope. The conductor body handles it directly. Use this for: package.json/tsconfig writes, single-file edits with no domain judgment, atomic refactors named in `agent-usage-discipline.md`.
+  - **`none (inline)`** → no work required; routing.md row exists for audit trail only.
 - A row appended to `.conductor/routing.md` with the same content
 
 ## Procedure
@@ -38,6 +42,7 @@ The conductor invokes this skill once per task dispatch, after Phase 1 enrichmen
    - **1 clear match** → use it. No deep read needed.
    - **2–3 candidates** → deep-read full body of those candidates ONLY (NOT the entire library). 📦 batch: issue all 2–3 `Read` calls in a single assistant turn — the candidate files are independent and their order does not change the routing decision. Track against the adaptive cap (each file in the batch counts as one deep-read).
    - **0 matches** → use `general-purpose`. Log the gap to `.conductor/routing.md`.
+   - **Trivial mechanical task** (single-file edit fully described in spec, scaffolding ≤5 files where every file's content is derivable from the spec, atomic refactor named in `agent-usage-discipline.md`) → output `subagent: in-process`. v6.1.6+: do NOT name a subagent just to "be safe" — naming a subagent makes dispatch binding; if dispatch would be theatre, mark in-process upfront. This prevents the routing-discipline drift where the body sees a named subagent in routing.md and disregards it in favor of in-process work.
 
 3. **Resolve the model** (score-derived from Phase 1.3.5):
    - Score 1–3 → request `haiku`
@@ -71,7 +76,26 @@ The conductor invokes this skill once per task dispatch, after Phase 1 enrichmen
 
    Rationale: complements the enrichment Execution Plan rather than duplicating it. Enrichment is global-scope (one gate, all tasks) and floors the baseline; plan-mode is local-scope (just-in-time, subagent-authored) and fills in the file order, rollback strategy, and codebase-specific gotchas the enrichment formula cannot predict. The flag is **advisory** — a subagent that finds an Execution Plan block already detailed enough may downgrade `mandatory` → noop in its own judgment, but should log that decision.
 
-8. **Append routing.md row** with the decision and a one-line reason. Same row format used for consistency across the session — future task dispatches can match against it.
+8. **Pre-approved dependencies** (v6.1.6+ — escape valve for spurious Hard Stops):
+   The following deps may be added (e.g., via `pnpm add`) WITHOUT triggering the "new dep → Hard Stop" rule, when justified by the task description and falling under their listed purpose:
+   - **Input validation**: `zod`, `valibot`, `arktype`
+   - **Utility classnames**: `clsx`, `tailwind-merge`, `class-variance-authority`
+   - **Icons**: `lucide-react`
+   - **Testing**: `vitest`, `@vitest/coverage-v8`, `@testing-library/react`, `@testing-library/jest-dom`
+   - **Dates** (small): `date-fns` (NOT `moment`, NOT `dayjs+plugins` — bundle size concerns)
+
+   Adding anything OUTSIDE this whitelist (paid SDKs, infrastructure clients like `stripe` or `@upstash/redis`, anything that pulls native bindings) → Hard Stop as before. Rationale: prior simulation surfaced that `zod` install tripped Hard Stop and the agent wrote a worse `.safeParse()`-shaped shim instead of installing zod — the protocol forced a worse solution.
+
+9. **Infra-dependency detection** (v6.1.6+):
+   Some patterns require an **external store** to be correct on serverless (Vercel, Lambda, etc.) but pass typecheck silently with in-memory stubs. When the task description names any of these patterns, the rubric MUST flag the resulting code as scaffold-only with a deferral note unless a compatible external store is connected:
+   - **Rate limiter** → needs Upstash Redis / Cloudflare KV / DurableObjects. In-memory Map = per-instance, not per-user.
+   - **Session cache / hot data cache** → same.
+   - **Background job queue** → needs Inngest, QStash, BullMQ-with-Redis. Not in-memory.
+   - **WebSocket fan-out** → needs Pusher, Ably, or sticky-session adapter.
+
+   When flagged: routing.md row gets `infra_dep: required` annotation; the `plan.md` Gated Dependencies section lists the gap; the subagent dispatch envelope `<constraints>` includes: "Scaffold-only — DO NOT claim production-ready without external store. Wrap the in-memory impl behind an interface so swap-in is mechanical."
+
+10. **Append routing.md row** with the decision and a one-line reason. Same row format used for consistency across the session — future task dispatches can match against it.
 
 ## Examples
 

@@ -14,7 +14,7 @@ Behavior:
   - Scans `.conductor/evidence/tasks/*/manifest.json`.
   - For each task missing `files.json` OR with `files.json::commit_sha`
     null/empty → flag.
-  - If any flagged: append a single advisory block to `.conductor/findings.md`.
+  - If any flagged: append a single advisory block to `.conductor/advisories.md`.
   - Deduplicates across runs via `.conductor/.evidence-completeness-last-warned`
     holding a hash of the failing-task list — if the gap set is unchanged
     since last warn, skip re-logging.
@@ -94,8 +94,8 @@ def _gap_hash(gaps: list[dict]) -> str:
     return hashlib.sha1(payload.encode("utf-8")).hexdigest()
 
 
-def _append_findings(findings: Path, gaps: list[dict]) -> None:
-    findings.parent.mkdir(parents=True, exist_ok=True)
+def _append_advisories(advisories: Path, gaps: list[dict]) -> None:
+    advisories.parent.mkdir(parents=True, exist_ok=True)
     lines = [
         "",
         f"## advisory ({_utc_now()}): incomplete v6 evidence",
@@ -117,11 +117,11 @@ def _append_findings(findings: Path, gaps: list[dict]) -> None:
         "`lib.evidence.record_files(task_id, files_written=[...], "
         "commit_sha=<SHA>, tests_run=[...])`. If the task was never "
         "completed (e.g., session ended mid-dispatch), document the reason "
-        "in `findings.md` and consider removing the manifest."
+        "in `advisories.md` and consider removing the manifest."
     )
     lines.append("")
     try:
-        with findings.open("a", encoding="utf-8") as f:
+        with advisories.open("a", encoding="utf-8") as f:
             f.write("\n".join(lines))
     except OSError:
         pass
@@ -153,8 +153,8 @@ def main() -> int:
     if last_hash == new_hash:
         return 0
 
-    findings = cwd / ".conductor" / "findings.md"
-    _append_findings(findings, gaps)
+    advisories = cwd / ".conductor" / "advisories.md"
+    _append_advisories(advisories, gaps)
 
     try:
         marker.write_text(new_hash, encoding="utf-8")

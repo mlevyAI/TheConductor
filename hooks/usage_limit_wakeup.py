@@ -132,7 +132,32 @@ def write_paused_state(paused_path, payload):
         os.close(fd)
 
 
+def _bundle_canary() -> None:
+    """v6.1.6+ — Write `.conductor/bundle-canary/usage_limit_wakeup.json` on first fire.
+
+    Lets the conductor's Phase 0a end-of-procedure check verify the bundle is
+    actually firing in this session (vs. silently absent in nested-dispatch
+    context). Best-effort — never raises.
+    """
+    try:
+        canary_dir = os.path.join(os.getcwd(), ".conductor", "bundle-canary")
+        canary_path = os.path.join(canary_dir, "usage_limit_wakeup.json")
+        if os.path.exists(canary_path):
+            return
+        os.makedirs(canary_dir, exist_ok=True)
+        with open(canary_path, "w", encoding="utf-8") as f:
+            json.dump({
+                "bundle": "usage_limit_wakeup",
+                "first_fired_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                "hook_path": os.path.abspath(__file__),
+                "pid": os.getpid(),
+            }, f, indent=2)
+    except Exception:
+        pass
+
+
 def main():
+    _bundle_canary()
     try:
         raw = sys.stdin.read()
         data = json.loads(raw) if raw.strip() else {}

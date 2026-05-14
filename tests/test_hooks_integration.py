@@ -118,7 +118,7 @@ def test_pre_phase0_readonly_allows_write_to_conductor_dir_in_phase0(tmp_path):
     conductor_dir = tmp_path / ".conductor"
     conductor_dir.mkdir()
     (conductor_dir / "state.json").write_text(json.dumps(state))
-    target = str(conductor_dir / "findings.md")
+    target = str(conductor_dir / "advisories.md")
     r = subprocess.run(
         [PYTHON, str(HOOKS_DIR / "pre_phase0_readonly.py")],
         input=json.dumps({"tool_name": "Write", "tool_input": {"file_path": target}}),
@@ -321,7 +321,7 @@ def test_output_quality_writes_finding_for_empty_csv_column(tmp_path):
         capture_output=True, text=True, cwd=str(tmp_path),
     )
     assert r.returncode == 0  # non-blocking
-    findings = (conductor_dir / "findings.md").read_text()
+    findings = (conductor_dir / "advisories.md").read_text()
     assert "email" in findings
     assert "empty" in findings.lower()
 
@@ -348,7 +348,7 @@ def test_stop_validator_writes_finding_when_report_missing(tmp_path):
         capture_output=True, text=True, cwd=str(tmp_path),
     )
     assert r.returncode == 0
-    findings = (conductor_dir / "findings.md").read_text()
+    findings = (conductor_dir / "advisories.md").read_text()
     assert "FINAL_REPORT.md not found" in findings
 
 
@@ -365,7 +365,7 @@ def test_stop_validator_writes_finding_when_sections_missing(tmp_path):
         capture_output=True, text=True, cwd=str(tmp_path),
     )
     assert r.returncode == 0
-    findings = (conductor_dir / "findings.md").read_text()
+    findings = (conductor_dir / "advisories.md").read_text()
     assert "missing sections" in findings
 
 
@@ -387,5 +387,5 @@ def test_stop_validator_passes_complete_report(tmp_path):
         capture_output=True, text=True, cwd=str(tmp_path),
     )
     assert r.returncode == 0
-    findings_path = conductor_dir / "findings.md"
+    findings_path = conductor_dir / "advisories.md"
     assert not findings_path.exists() or "missing sections" not in findings_path.read_text()
