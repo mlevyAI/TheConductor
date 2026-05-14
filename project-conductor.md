@@ -152,17 +152,7 @@ Runs **before Phase 0**, only when `.conductor/state.json` is absent (first cond
    - **Why this replaces the old `git status` canary**: the previous design ran `git status` (or `ls`) after the merge to see if Claude Code prompted for newly-allowed commands. That tests whether the shell still works (always yes) — Claude Code reads `.claude/settings.json` at session start, not on every tool call, so an in-session settings change usually does not activate until session restart. The shell canary gave false confidence; the JSON validators above test the property we actually care about (well-formed file with the expected schema).
 5. Log "Phase 0a auto-install: 9 enforcement hooks wired" to `decisions.md` (single line, no `D###` ID needed — this is a setup event, not a routing decision).
 
-6. **Bundle canary check** (v6.1.6+ — runs *after* the first non-canary tool call of the session so installed bundles have had a chance to fire). For each optional bundle the user installed in this session (`agent-monitor`, `heartbeat`, `usage_limit_wakeup`), check whether `.conductor/bundle-canary/<bundle>.json` exists. Each bundle's first hook invocation writes that file. If the file is missing after at least one PostToolUse-firing tool call has run, the bundle was wired in `.claude/settings.json` but did NOT actually fire. Log to `advisories.md`:
-   ```
-   ## advisory ({timestamp}): bundle `<name>` installed but hook not firing
-   Hooks are wired in `.claude/settings.json` but the bundle canary at
-   `.conductor/bundle-canary/<name>.json` was not written. Likely cause:
-   nested-dispatch context where Claude Code does not propagate project hooks
-   to dispatched sub-agents (see §Nested dispatch context). To verify the
-   bundle works, re-run the conductor as the main thread:
-       claude --agent project-conductor
-   ```
-   This check turns the previously-silent "bundle installed but never fires" failure mode into a visible advisory. The state.json `bundles_installed` field stays accurate (what was wired); the canary tells the user which of those wired bundles actually executed.
+6. **Bundle canary check** (v6.1.6+ — runs after first non-canary tool call so bundles have had a chance to fire). For each installed bundle (`agent-monitor`, `heartbeat`, `usage_limit_wakeup`), check `.conductor/bundle-canary/<bundle>.json` (each bundle's first hook invocation writes it). Missing file = wired but didn't fire — log to `advisories.md` with the bundle name and a pointer to §Nested dispatch context (most likely cause). Keeps `state.json::bundles_installed` accurate (what was wired) while making the silent "wired but never fires" failure mode visible.
 
 **No prompt to the user.** The 9 enforcement hooks are part of the conductor's operational identity — asking "do you want enforcement?" is asking "do you want the conductor to do its job?" The user signed up for that by invoking the conductor.
 
